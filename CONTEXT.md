@@ -28,8 +28,8 @@ _Avoid_: voxel, cell (bare); "voxel" in older notes means Control Cell
 **Control Level**:
 The octree level at which Control Cells are formed — i.e. the spatial granularity
 of Capacity Budget allocation. A derived quantity, not a free knob: chosen from the
-Capacity Budget and the reallocation headroom (the finest level that still leaves
-enough budget free to move).
+Capacity Budget and a minimum mean occupancy (the finest level whose Control Cells
+still hold enough anchors each to have room to move).
 _Avoid_: control resolution, allocation level
 
 **Cell Membership**:

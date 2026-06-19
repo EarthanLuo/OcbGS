@@ -194,28 +194,38 @@ live across the hierarchy. (Terminology for this section is fixed in `CONTEXT.md
   deeper (subdivide).
 
 **`control_level` is derived, not a free knob.** Its feasible range is bounded on
-both ends by the floor (§4.3) and the resulting active-cell count
-`N_active(level)` (number of occupied Control Cells at that level):
+both ends by the active-cell count `N_active(level)` (number of occupied Control
+Cells at that level) and the **mean occupancy** `m(level) = B_total / N_active(level)`
+(average anchors per Control Cell — the per-cell reallocation headroom):
 
-- *Too fine* ⇒ `N_active → #anchors → B_total` ⇒ reallocatable slack
-  `S = B_total − floor · N_active` collapses ⇒ the floor pins everyone ⇒ controller
-  degenerates to identity.
+- *Too fine* ⇒ `N_active → #anchors → B_total` ⇒ `m → 1` ⇒ almost every cell sits
+  at the floor with no room to grow or shrink ⇒ controller degenerates to identity.
 - *Too coarse* ⇒ `N_active → 1` ⇒ nothing to reallocate between ⇒ degenerates to
   uniform.
 
-Given a **reallocation-headroom fraction `τ`** (the share of the budget kept free
-for actual movement) and a minimum cell count `A_min`, `control_level` is derived:
+The control knob is **mean occupancy**, not an aggregate budget fraction. Given a
+**minimum mean occupancy `ρ_min`** (each Control Cell averages ≥ `ρ_min` anchors, so
+it has room to move) and a minimum cell count `A_min`, `control_level` is derived:
 
 ```
 control_level = max { level :
-                      floor · N_active(level) ≤ (1 − τ) · B_total      (feasibility + τ slack)
-                      ∧ N_active(level) ≥ A_min }                       (enough cells to move between)
+                      B_total / N_active(level) ≥ ρ_min     (per-cell headroom; implies floor feasibility since ρ_min > floor)
+                      ∧ N_active(level) ≥ A_min }            (enough cells to move between)
 ```
 
-i.e. **the finest level that still leaves headroom `τ` and enough cells**. This
-makes the granularity reproducible across datasets/budgets: fix `τ`, and
-`control_level` falls out of `B_total` automatically. The ablation sweeps **`τ`**
-(not raw `control_level`).
+i.e. **the finest level whose cells still average `≥ ρ_min` anchors and number
+`≥ A_min`**. Fix `ρ_min`, and `control_level` falls out of `B_total` automatically.
+The ablation sweeps **`ρ_min`** (not raw `control_level`).
+
+**Why `ρ_min`, not the earlier aggregate-headroom fraction `τ`.** Under `floor = 1`
+the two are *exactly* linked — `m = 1 / (1 − τ)` — but `τ` is dangerously
+mis-conditioned as a knob: a "conservative-sounding" `τ = 0.3` (30 % of the budget
+kept free) corresponds to `m = 1/0.7 ≈ 1.43` anchors/cell, i.e. **the floor-pinned
+degenerate regime** — the aggregate "30 % free" hides that the free budget is spread
+so thin that per cell there is essentially no room. `ρ_min` states the per-cell
+headroom directly (`ρ_min ≈ 8` ⇔ `τ ≈ 0.875`) and is the well-conditioned form of
+the same constraint. The floor-feasibility bound (`floor · N_active ≤ B_total`,
+i.e. `floor ≤ m`) is automatically implied whenever `ρ_min > floor`.
 
 ### 4.3 Budget normalization (the budget-constraint part)
 
@@ -229,9 +239,21 @@ makes the granularity reproducible across datasets/budgets: fix `τ`, and
 - **floor**: a baseline Target Capacity that protects existing/observed content
   from being starved into mush. **Applies only to active Control Cells** (occupied
   or demand > 0); empty space gets no floor, so `Σ floor = floor · N_active`.
-- **cap**: prevents a single cell from monopolizing the budget.
-- Feasibility (see §4.2 derivation): `floor · N_active ≤ (1 − τ) · B_total` must
-  hold, else the Budget Constraint is physically unsatisfiable.
+  Default **`floor = 1`** (one anchor — the physical minimum to represent anything;
+  `0` lets a low-demand cell empty completely and punch a hole when a held-out view
+  looks at it). It is the one *absolute* per-cell knob, kept safe by the `ρ_min`
+  guard: with `m ≥ ρ_min ≫ floor`, floor eats only `floor/m ≈ 1/ρ_min ≈ 12 %` of the
+  budget, not the ~70 % a fine `control_level` (`m ≈ 1.43`) would imply.
+- **cap**: prevents a single cell from monopolizing the budget. Set **relative to
+  mean occupancy**: `cap = min(k_cap · m, 0.25 · B_total)` (`m = B_total/N_active`) —
+  the `k_cap · m` term scales the ceiling with granularity, the `0.25 · B_total` term
+  is a hard monopoly guard. Default **`k_cap = 8`** (a high-demand cell may hold up
+  to 8× the mean) — deliberately **not** tight (`2×`): BungeeNeRF, the highlight
+  scene, is built for extreme demand skew, so a tight cap would clip the very win it
+  is meant to show. Ablate `k_cap ∈ {4, 8, 16}`.
+- Feasibility (see §4.2 derivation): the `ρ_min` guard (`m = B_total/N_active ≥
+  ρ_min > floor`) implies `floor · N_active < B_total`, so the Budget Constraint is
+  always physically satisfiable at the derived `control_level`.
 - `Σ c*(v) ≈ B_total` here; §5 turns the `≈` into the exact Budget Constraint.
 
 ### 4.4 Cadence and smoothing
@@ -422,11 +444,16 @@ mirroring how `control_level` is derived (§4.2).
 
 **Step 4 — stability (anti-thrash)**
 
-- **Dead-band:** ignore `|Δ(v)|` below a threshold (avoid anchors cycling in/out).
-- **Rate limit:** move at most `r%` of `B_total` per controller step (e.g. 5%) for
-  smooth convergence (`r` distinct from the gate sustain count `k`). With the
-  budget-aware ramp there is no overshoot cliff at the phase switch, so the rate
-  limit only governs steady-state churn.
+- **Dead-band `θ`:** ignore a cell's move when `|Δ(v)| < max(1, θ_frac · c*(v))` —
+  **per-cell-relative**, a fraction of the cell's own Target Capacity, *not* an
+  absolute count. An absolute / `B_total`-scaled dead-band is wrong: per-cell `Δ` are
+  `O(m)` (single digits at a healthy `m ≈ 8`), so any `B_total`-scaled threshold
+  (e.g. `0.001·B_total ≈ 100`) would freeze every cell. Default `θ_frac = 0.25`.
+- **Rate limit `r%`:** move at most `r%` of `B_total` per controller step
+  (`Σ|Δ| ≤ r%·B_total`) — correctly a **global** `B_total` fraction since it bounds a
+  sum over cells. Default `5%`; `r` distinct from the gate sustain count `k`. With the
+  budget-aware ramp there is no overshoot cliff at the phase switch, so the rate limit
+  only governs steady-state churn.
 - EMA (§4.4) keeps the demand field itself from jumping.
 
 **Setting `B_total`:**
@@ -441,6 +468,29 @@ mirroring how `control_level` is derived (§4.2).
   break pure capacity-pairing). **Per-scene**, from a **fixed-seed** baseline run,
   the exact value reported (§7.3).
 - Sweep `B_total` → quality-vs-#anchors Pareto curve (the money figure).
+
+### 5.0 Controller defaults
+
+The fixed pipeline for all ablations (§6.3 varies one axis at a time). The
+load-bearing convention: **every per-cell knob is expressed in units that scale with
+mean occupancy `m = B_total/N_active`** (`cap`, `θ`), so the controller behaves
+identically across `control_level` choices; `floor` is the one *absolute* per-cell
+knob (the physical minimum, kept safe by `ρ_min`); `r%` is the one *global* knob (a
+`B_total` fraction bounding a sum).
+
+| knob | symbol | default | units / form | ablate |
+|---|---|---|---|---|
+| min mean occupancy | `ρ_min` | 8 | anchors/cell — derives `control_level` (§4.2) | {4, 8, 16} |
+| min active cells | `A_min` | 10 | cells | — |
+| floor | `floor` | 1 | anchors/cell (absolute physical min) | — |
+| cap | `k_cap` | 8 | `min(k_cap·m, 0.25·B_total)` | {4, 8, 16} |
+| dead-band | `θ_frac` | 0.25 | `max(1, θ_frac·c*(v))` (per-cell) | — |
+| rate limit | `r%` | 5% | `Σ|Δ| ≤ r%·B_total` (global) | {2.5, 5, 10}% |
+| smoothing/gate horizon | `τ_smooth` | 3 | controller steps (§4.4) | sweep |
+| gate sustain | `k` | 2–3 | consecutive steps (§5) | — |
+
+These are *initial* first-principles values (scaling arguments), not yet empirically
+tuned; the §6.3 ablations validate / refine them.
 
 ### 5.1 ReallocationPlan & controller test surface
 
@@ -466,7 +516,7 @@ not incidental):
    give the remaining `R = B_total − Σ⌊·⌋` units to the largest fractional
    remainders ⇒ `Σ target = B_total` exactly and integer;
 4. `delta = target − n(v)`;
-5. **dead-band**: `|delta| < θ → 0`;
+5. **dead-band**: `|delta(v)| < max(1, θ_frac·target(v)) → 0` (per-cell, §5 Step 4);
 6. **rate-limit**: scale so `Σ|delta| ≤ r%·B_total` (proportional);
 7. **steady re-balance**: dead-band/rate-limit can break `Σδ = 0`; trim the
    marginal grow/prune to restore `Σδ = 0` (steady). Ramp instead clamps `δ ≥ 0`.
@@ -533,10 +583,12 @@ demand-reallocation variable.
      (No per-producer distribution alignment; that would erase the shape the
      ablation measures.)
    - Conservation: hard / soft / none.
-   - Reallocation headroom: sweep **`τ`** (`control_level` is derived from
-     `τ` + `B_total`, §4.2) — granularity vs slack trade-off.
-   - Controller knobs: floor/cap, `τ_smooth` (shared smoothing/gate horizon), `k`
-     (gate sustain count), rate-limit sensitivity.
+   - Reallocation headroom: sweep **`ρ_min`** (mean occupancy; `control_level` is
+     derived from `ρ_min` + `B_total`, §4.2) — granularity vs per-cell-headroom
+     trade-off.
+   - Controller knobs: `k_cap` (cap multiple), `θ_frac` (dead-band), `r%`
+     (rate-limit), `τ_smooth` (shared smoothing/gate horizon), `k` (gate sustain
+     count). Defaults in §5.0.
    - Optional (render-only): reallocation + CLoD-GS continuous opacity decay —
      composability check; expected to barely move still-image metrics (§7.6).
 4. **By-product:** training time / FPS (the compute-saving corollary). Includes the
