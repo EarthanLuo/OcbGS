@@ -213,10 +213,18 @@ makes the granularity reproducible across datasets/budgets: fix `τ`, and
 ### 4.4 Cadence and smoothing
 
 - Accumulate every iter (reuse `training_statis`, free).
-- Recompute demand field + run controller every **N iters** (aligned with
-  Octree-GS `check_interval = 100`).
-- **EMA** smoothing of the demand field across windows to damp discrete
-  grow/prune jumpiness.
+- Recompute demand field + run controller every **N iters** — one *controller step*
+  (aligned with Octree-GS `check_interval = 100`).
+- **One shared smoothing time constant `τ_smooth`** (in controller steps) governs
+  both the EMA on the demand field and the convergence gate (§5):
+  - EMA: `β = 1 − 1/τ_smooth`, smoothing the demand field over ≈`τ_smooth` steps to
+    damp grow/prune jumpiness.
+  - The §5 Spearman gate compares `d_smooth` **`τ_smooth` steps apart** (see below).
+- **Why one constant, not two.** The Spearman comparison horizon must be
+  `≥ τ_smooth` (the EMA memory): comparing closer than the smoothing memory measures
+  the filter's autocorrelation, not whether the signal re-ranked. Setting the
+  horizon **equal** to `τ_smooth` is the tightest valid choice — so the two are not
+  independent knobs. Default `τ_smooth = 3` (≈300 iter @ N=100); ablation axis.
 
 ### 4.5 Pluggable interface
 
@@ -272,12 +280,14 @@ overshoot prune).
   signal may still be immature). Once at `B_total`, `p → 0` naturally **freezes
   structure** so anchors keep training to maturity until the gate opens.
 - **Phase switch (emergent):** enter Phase 2 when **`N_total ≥ B_total` AND the
-  demand ranking has stabilized** — Spearman rank correlation of `d(v)` between
-  consecutive controller windows, computed over their **shared** cells, `≥ 0.9`,
-  **sustained for k (≈2–3) consecutive windows**. Rank stability (not EMA magnitude
-  stability) is the correct gate: pruning ranks by `s(a)`, and ranks can hold while
-  magnitudes drift under global rescaling. *Plateau fallback:* if growth flattens
-  below `B_total`, enter Phase 2 under the cap (see budget semantics, §5 / §6.3).
+  demand ranking has stabilized** — Spearman rank correlation of `d_smooth(t)` vs
+  `d_smooth(t − τ_smooth)` (horizon = `τ_smooth`, §4.4), over their **shared**
+  cells, `≥ 0.9`, **sustained for k (≈2–3) consecutive steps**. Two orthogonal
+  knobs: `τ_smooth` sets the comparison horizon / smoothing scale, `k` sets how long
+  stability must hold. Rank stability (not EMA magnitude stability) is the correct
+  gate: pruning ranks by `s(a)`, and ranks can hold while magnitudes drift under
+  global rescaling. *Plateau fallback:* if growth flattens below `B_total`, enter
+  Phase 2 under the cap (see budget semantics below / §6.3).
 - **Phase 2 — steady-state reallocation:** prune surplus to free P slots, then
   redistribute exactly P slots to deficit cells ∝ Δ⁺.
 
@@ -297,9 +307,10 @@ mirroring how `control_level` is derived (§4.2).
 **Step 4 — stability (anti-thrash)**
 
 - **Dead-band:** ignore `|Δ(v)|` below a threshold (avoid anchors cycling in/out).
-- **Rate limit:** move at most `k%` of `B_total` per controller step (e.g. 5%) for
-  smooth convergence. (With the budget-aware ramp there is no overshoot cliff at
-  the phase switch, so the rate limit only governs steady-state churn.)
+- **Rate limit:** move at most `r%` of `B_total` per controller step (e.g. 5%) for
+  smooth convergence (`r` distinct from the gate sustain count `k`). With the
+  budget-aware ramp there is no overshoot cliff at the phase switch, so the rate
+  limit only governs steady-state churn.
 - EMA (§4.4) keeps the demand field itself from jumping.
 
 **Setting `B_total`:**
@@ -351,7 +362,8 @@ demand-reallocation variable.
    - Conservation: hard / soft / none.
    - Reallocation headroom: sweep **`τ`** (`control_level` is derived from
      `τ` + `B_total`, §4.2) — granularity vs slack trade-off.
-   - Controller knobs: floor/cap, EMA, rate-limit `k` sensitivity.
+   - Controller knobs: floor/cap, `τ_smooth` (shared smoothing/gate horizon), `k`
+     (gate sustain count), rate-limit sensitivity.
 4. **By-product:** training time / FPS (the compute-saving corollary).
 5. **Qualitative:** per-cell Target Capacity heatmap showing capacity flowed to
    high-detail regions — also previews the future semantic version (swap heatmap
