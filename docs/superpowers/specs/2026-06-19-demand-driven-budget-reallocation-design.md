@@ -42,7 +42,7 @@ throughout.
 |---|----------|--------|
 | D1 | Demand signal source | **Error/visibility-driven** demand field, **normalized under a global budget** (rather than camera-geometry-only or externally-fixed budget) |
 | D2 | Conserved budget | **Capacity** (total #anchors; rendered Gaussians/memory derived); compute savings reported as a by-product, not the core claim |
-| D3 | Architecture | **Octree-GS as the spine**, absorbing CLoD-GS (render-side continuous opacity decay) and FastGS (importance scoring) parts as needed |
+| D3 | Architecture | **Octree-GS spine** + FastGS importance (demand). **CLoD-GS is a baseline**, not a core component; its render-side opacity decay is an *optional, orthogonal, render-only* ablation (barely moves still-image metrics — §7.6) |
 | D4 | Demand error term | **Gradient accumulator as primary** (free per-iter), **FastGS photometric residual as refinement** (periodic) |
 | D5 | Budget conservation | **Hard upper-bound constraint** (`Σn ≤ B_total`), two emergent phases (ramp then steady-state reallocation) |
 | D6 | Evaluation scale | **Standard benchmarks (near-uniform control) + BungeeNeRF** as the large-scale highlight (chosen to maximize demand non-uniformity; MatrixCity dropped as near-uniform) |
@@ -499,6 +499,8 @@ demand-reallocation variable.
      `τ` + `B_total`, §4.2) — granularity vs slack trade-off.
    - Controller knobs: floor/cap, `τ_smooth` (shared smoothing/gate horizon), `k`
      (gate sustain count), rate-limit sensitivity.
+   - Optional (render-only): reallocation + CLoD-GS continuous opacity decay —
+     composability check; expected to barely move still-image metrics (§7.6).
 4. **By-product:** training time / FPS (the compute-saving corollary). Includes the
    **A+B vs A-only training-time delta** — B's `2·|camlist|`-render cost must be
    shown, not hidden (decides the §4.1 fusion-vs-validation fallback).
@@ -652,6 +654,31 @@ def adjust_anchor(self, iteration, ..., controller, partition):
   `train.py` stays minimal: construct `partition`/`controller`/producer once, attach
   to the model; the existing `adjust_anchor(...)` call site is unchanged.
 
+### 7.6 Render path (the CUDA rasterizer is never modified)
+
+Confirmed in `gaussian_renderer/__init__.py`: per-Gaussian opacity is produced in
+**Python** by an MLP (`get_opacity_mlp`) and already multiplied by a Python factor
+(`neural_opacity * prog`, the progressive factor) before being passed as a **tensor
+argument** to the stock `diff_gaussian_rasterization` rasterizer. Consequences:
+
+- **We never modify the CUDA rasterizer.** Every change (demand, partition,
+  controller, actuator, optional decay) is Python-side, so the CUDA-free /
+  locally-testable invariant holds end to end. We also do **not** adopt CLoD-GS's
+  custom `mask_diff_gaussian_rasterization` (that exists for a learnable mask; we use
+  discrete grow/prune). The render path is the stock Octree-GS path.
+- **CLoD-GS opacity decay, if used, is a one-line Python multiply** at the same spot
+  as `* prog` — zero CUDA. But it is **not absorbed as a core component**: its only
+  value is smooth (continuous) LOD transitions / anti-popping, which is **invisible
+  to still-image PSNR/SSIM/LPIPS** (§6.2) and to offline figures (§8). It would
+  barely move the headline numbers and would muddy "is the gain from reallocation?".
+  CLoD-GS is therefore a **baseline**; the decay is an *optional* ablation
+  ("reallocation + continuous decay") showing the two compose.
+- **Decay, if applied, is eval-render-only — never inside `training_statis`.**
+  `anchor_demon` (visibility count) is decay-independent, but `opacity_accum` would
+  absorb the decay and bias the dead-anchor GC toward pruning distant anchors,
+  coupling decay with the discrete reallocation (double-counting distance). Eval-only
+  application keeps them orthogonal.
+
 ## 8. Out of Scope
 
 - **Interactive viewer.** Paper-stage presentation is **offline-rendered images
@@ -663,5 +690,7 @@ def adjust_anchor(self, iteration, ..., controller, partition):
   not part of this work.
 - Semantic / instance-driven demand producer (future paper; interface reserved).
 - Multi-GPU distributed training (single-GPU per job by design).
-- Differentiable/continuous capacity actuator (CLoD-GS opacity decay used only on
-  the render side; capacity changes are discrete grow/prune).
+- Differentiable/continuous capacity actuator: capacity changes are **discrete**
+  grow/prune. CLoD-GS's continuous opacity decay is a render-only, orthogonal,
+  *optional* ablation (§7.6) — not a differentiable capacity mechanism, not a core
+  component.
