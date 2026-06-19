@@ -30,7 +30,7 @@ the existing growing/prune actuator.
 
 A later paper replaces the demand producer with a **semantic / instance ROI
 extractor**: "the detail I care about is this object/semantic class." Because the
-demand producer is a pluggable interface emitting a per-voxel weight field, the
+demand producer is a pluggable interface emitting a per-cell weight field, the
 semantic version reuses the entire downstream pipeline unchanged. This design
 constraint — demand as a swappable producer of a spatial weight field — is
 honored throughout.
@@ -52,17 +52,17 @@ honored throughout.
 The Octree-GS training loop (render → loss → backprop → optimize anchors) is kept
 intact. We **replace only its densification policy**: the single global
 gradient-threshold-driven `anchor_growing`/`prune` becomes a scheduling layer that
-reads a demand field, enforces a global budget, and issues per-voxel grow/prune
+reads a demand field, enforces a global budget, and issues per-cell grow/prune
 targets.
 
 ```
                 ┌─────────────────────────────────────────────┐
    every iter   │  Octree-GS training loop (render→loss→bp)     │
                 └───────────────┬─────────────────────────────┘
-                                │ record per-voxel error × visibility
+                                │ record per-cell error × visibility
                                 ▼
                     ① DemandProducer (pluggable interface)
-                       produce(scene, stats) → demand[voxel] = score
+                       produce(scene, stats) → demand[cell] = score
                        now:    ErrorVisibilityDemand
                        future: SemanticDemand  (same shape, drop-in)
                                 │ demand field
@@ -72,10 +72,10 @@ targets.
                        c*(v) = clamp(B_total · normalize(demand), floor, cap)
                        Δ(v) = c*(v) − n(v)
                        invariant: Σ n(v) ≡ B_total  (steady state)
-                                │ per-voxel grow/prune targets
+                                │ per-cell grow/prune targets
                                 ▼
                     ③ Actuator = Octree-GS anchor_growing/prune
-                       global threshold → per-voxel quota from controller
+                       global threshold → per-cell quota from controller
                                 │
                                 ▼
                        anchors reallocated → back to training loop
@@ -90,11 +90,11 @@ targets.
   `Σ n(v) ≡ B_total` is therefore verifiable in isolation by unit tests, with no
   CUDA dependency — this also enables local development on Windows (see §7).
 - **③ Actuator** reuses Octree-GS's working `anchor_growing`/`prune_anchor`,
-  parameterizing the single global threshold into per-voxel quotas — minimal
+  parameterizing the single global threshold into per-cell quotas — minimal
   intrusion.
 
 The only essential difference from Octree-GS: densify/prune changes from
-*gradient-driven, unbounded* to **demand-driven, budget-conserving, per-voxel
+*gradient-driven, unbounded* to **demand-driven, budget-conserving, per-cell
 scheduled**.
 
 ## 4. Demand Field
@@ -114,6 +114,14 @@ maintains per iteration in `training_statis` (near-zero added cost):
   (every N iters) to correct the gradient-based demand. Cost amortized; also an
   ablation axis.
 
+**Fusion scale alignment (A+B only).** When B refines A (e.g. `s = g ⊙ (1 + α·p̂)`
+or `g + λ·p`), the two signals are put on a comparable scale *at the fusion point*
+(e.g. each normalized to unit sum) so the mixing weight is meaningful and one does
+not swamp the other. This scale alignment lives in the controller's fusion step,
+**not** in the Demand Producer contract — a single-source producer needs none of
+it, and forcing per-producer distribution alignment would distort the very signal
+shape the ablation measures (see §6.3 fairness condition).
+
 ### 4.2 Aggregation to per-cell demand
 
 **Octree structure recap.** Octree-GS samples anchors at *every* level
@@ -124,32 +132,66 @@ distance (closer ⇒ finer levels). The detail capacity of a region is therefore
 **how deeply that region is populated** (how many fine-level anchors it holds).
 
 **The control unit is NOT only the coarsest (level-0) cell.** Demand and capacity
-live across the hierarchy. We make the allocation granularity an explicit knob:
+live across the hierarchy. (Terminology for this section is fixed in `CONTEXT.md`;
+"voxel" is retired in favour of **Control Cell**.)
 
-- **`control_level`** — the octree level whose cells the controller buckets demand
-  into and allocates capacity over. Cells at a single level form a clean
-  **non-overlapping partition** (required for budget normalization and the
-  conservation invariant). Default: a mid-to-fine level, **not** level 0; tuned as
-  an ablation (coarser `control_level` ⇒ coarser reallocation + less overhead/jitter;
-  finer ⇒ finer control + more cells to manage).
-- **Per-cell demand** `d(v) = Σ_{a ∈ column(v)} s(a)`, summing the per-anchor
-  signal over all anchors (at any level) whose position falls inside control-cell
-  `v`'s spatial column.
+- **Control Cell / Control Level.** A Control Cell is an *occupied* octree cell at
+  the `control_level` — a box becomes a Control Cell once it holds an anchor or
+  carries demand; empty space is not a Control Cell. Cells at a single level form a
+  **non-overlapping partition**, required for budget normalization and the Budget
+  Constraint.
+- **Cell Membership (by position).** Each anchor belongs to exactly one Control
+  Cell: the one whose box contains the anchor's position, **independent of the
+  anchor's own level**. A coarse anchor is billed to the single cell containing its
+  centre (no area-weighted splitting — fractional anchors would break both the
+  partition and the grow/prune actuator). Its cross-cell influence is recovered
+  through the demand channel, not the membership channel.
+- **Per-cell demand** `d(v) = Σ_{a : member(a)=v} s(a)`.
 - **Capacity within a cell is realized at finer levels.** "Reallocating Gaussians
   from low-demand to high-demand cells" means: low-demand cells stop growing
   deeper / get their fine-level anchors pruned (coarsen), high-demand cells grow
-  deeper (subdivide). Capacity = occupied octree depth, controlled per cell.
+  deeper (subdivide).
 
-Throughout this document "voxel" is shorthand for a control-cell at `control_level`.
+**`control_level` is derived, not a free knob.** Its feasible range is bounded on
+both ends by the floor (§4.3) and the resulting active-cell count
+`N_active(level)` (number of occupied Control Cells at that level):
 
-### 4.3 Budget normalization (the C part)
+- *Too fine* ⇒ `N_active → #anchors → B_total` ⇒ reallocatable slack
+  `S = B_total − floor · N_active` collapses ⇒ the floor pins everyone ⇒ controller
+  degenerates to identity.
+- *Too coarse* ⇒ `N_active → 1` ⇒ nothing to reallocate between ⇒ degenerates to
+  uniform.
+
+Given a **reallocation-headroom fraction `τ`** (the share of the budget kept free
+for actual movement) and a minimum cell count `A_min`, `control_level` is derived:
+
+```
+control_level = max { level :
+                      floor · N_active(level) ≤ (1 − τ) · B_total      (feasibility + τ slack)
+                      ∧ N_active(level) ≥ A_min }                       (enough cells to move between)
+```
+
+i.e. **the finest level that still leaves headroom `τ` and enough cells**. This
+makes the granularity reproducible across datasets/budgets: fix `τ`, and
+`control_level` falls out of `B_total` automatically. The ablation sweeps **`τ`**
+(not raw `control_level`).
+
+### 4.3 Budget normalization (the budget-constraint part)
 
 `c*(v) = clamp(B_total · d(v) / Σ d, floor, cap)`
 
-- **floor**: every visible cell keeps a baseline capacity (prevents low-demand
-  regions from being starved into mush).
+- The normalization `d(v)/Σ d` is **L1** (pure positive scaling): it removes
+  absolute scale but preserves rank and all inter-cell ratios — i.e. it preserves
+  the demand's *shape*, which is the signal's information. The Demand Score
+  contract (§4.1) need only be non-negative and cross-cell-comparable; units never
+  reach the controller.
+- **floor**: a baseline Target Capacity that protects existing/observed content
+  from being starved into mush. **Applies only to active Control Cells** (occupied
+  or demand > 0); empty space gets no floor, so `Σ floor = floor · N_active`.
 - **cap**: prevents a single cell from monopolizing the budget.
-- `Σ c*(v) ≈ B_total` — the controller's conservation target.
+- Feasibility (see §4.2 derivation): `floor · N_active ≤ (1 − τ) · B_total` must
+  hold, else the Budget Constraint is physically unsatisfiable.
+- `Σ c*(v) ≈ B_total` here; §5 turns the `≈` into the exact Budget Constraint.
 
 ### 4.4 Cadence and smoothing
 
@@ -163,19 +205,22 @@ Throughout this document "voxel" is shorthand for a control-cell at `control_lev
 
 ```python
 class DemandProducer:
-    def produce(self, scene, stats) -> Tensor:  # shape [num_voxels]
+    # Contract: return raw, non-negative, cross-cell-comparable Demand Scores in
+    # [0, +inf), one per active Control Cell. No units, no per-producer
+    # normalization — the single L1 normalization lives in the controller.
+    def produce(self, scene, stats) -> Tensor:  # shape [N_active]
         ...
 
 # now:    ErrorVisibilityDemand (§4.1–4.2)
-# future: SemanticDemand (semantic mask → per-voxel ROI weight, same shape)
+# future: SemanticDemand (semantic mask → per-cell ROI weight, same contract)
 ```
 
 ## 5. Budget Controller
 
 A pure function with a hard conservation guarantee.
 
-**Inputs:** demand field `d(v)` (A smoothed + periodic B correction), current
-per-voxel capacity `n(v)`, global budget `B_total`.
+**Inputs:** Demand Field `d(v)` (gradient, EMA-smoothed + periodic photometric
+correction), current Cell Occupancy `n(v)`, Capacity Budget `B_total`.
 
 **Step 1 — surplus/deficit**
 
@@ -184,12 +229,12 @@ c*(v) = clamp(B_total · d(v)/Σd, floor, cap)   # target capacity
 Δ(v)  = c*(v) − n(v)                            # >0 wants more, <0 has surplus
 ```
 
-**Step 2 — translate to per-voxel actuator parameters**
+**Step 2 — translate to per-cell actuator parameters**
 
-- **Grow (Δ>0):** lower `anchor_growing`'s global `grad_threshold` per voxel —
+- **Grow (Δ>0):** lower `anchor_growing`'s global `grad_threshold` per cell —
   larger deficit ⇒ lower threshold (grows more aggressively); cap new anchors per
-  voxel at `Δ(v)`.
-- **Prune (Δ<0):** in surplus voxels, prune the `|Δ(v)|` lowest-`s(a)` anchors
+  cell at `Δ(v)`.
+- **Prune (Δ<0):** in surplus cells, prune the `|Δ(v)|` lowest-`s(a)` anchors
   (reusing the demand signal for ranking; no new metric introduced).
 
 **Step 3 — hard conservation, two-phase**
@@ -197,7 +242,7 @@ c*(v) = clamp(B_total · d(v)/Σd, floor, cap)   # target capacity
 - **Phase 1 — ramp (`iter < T_budget`):** total grows from initial toward
   `B_total` with no forced pruning (fill the budget first).
 - **Phase 2 — steady state (`iter ≥ T_budget`):** **prune surplus to free P
-  slots, then redistribute exactly P slots to deficit voxels proportional to
+  slots, then redistribute exactly P slots to deficit cells proportional to
   Δ⁺.** Total is pinned exactly at `B_total`.
 
 ⇒ `Σ n(v) ≡ B_total` holds literally and is unit-testable. Phase split avoids
@@ -244,14 +289,19 @@ demand-reallocation variable.
 2. **Money figure — Pareto curve:** sweep `B_total ∈ {0.25, 0.5, 1, 2}× baseline`
    → quality. Claim: our curve dominates across budgets.
 3. **Ablations:**
-   - Demand source: uniform (= Octree-GS) / A only (gradient) / A+B (gradient +
-     photometric).
+   - Demand source: uniform (= Octree-GS) / gradient only / gradient + photometric.
+     **Fairness condition:** hold the entire downstream pipeline identical across
+     arms (EMA, cadence, controller L1 normalization, floor/cap) and vary *only*
+     the raw signal source — so any quality delta is attributable to the signal's
+     informativeness, not to an incidental change of distribution shape. (No
+     per-producer distribution alignment; that would erase the shape the ablation
+     measures.)
    - Conservation: hard / soft / none.
-   - Control granularity: `control_level` (coarse → fine) — reallocation
-     granularity vs overhead/jitter trade-off.
+   - Reallocation headroom: sweep **`τ`** (`control_level` is derived from
+     `τ` + `B_total`, §4.2) — granularity vs slack trade-off.
    - Controller knobs: floor/cap, EMA, rate-limit `k` sensitivity.
 4. **By-product:** training time / FPS (the compute-saving corollary).
-5. **Qualitative:** per-voxel capacity heatmap showing capacity flowed to
+5. **Qualitative:** per-cell Target Capacity heatmap showing capacity flowed to
    high-detail regions — also previews the future semantic version (swap heatmap
    for semantic ROI).
 
