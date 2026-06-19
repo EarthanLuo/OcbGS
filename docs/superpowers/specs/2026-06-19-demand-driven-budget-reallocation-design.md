@@ -132,13 +132,36 @@ maintains per iteration in `training_statis` (near-zero added cost):
   (every N iters) to correct the gradient-based demand. Cost amortized; also an
   ablation axis.
 
-**Fusion scale alignment (A+B only).** When B refines A (e.g. `s = g ⊙ (1 + α·p̂)`
-or `g + λ·p`), the two signals are put on a comparable scale *at the fusion point*
-(e.g. each normalized to unit sum) so the mixing weight is meaningful and one does
-not swamp the other. This scale alignment lives in the controller's fusion step,
-**not** in the Demand Producer contract — a single-source producer needs none of
-it, and forcing per-producer distribution alignment would distort the very signal
-shape the ablation measures (see §6.3 fairness condition).
+**Fusion of A (gradient) and B (photometric).** B is a *second* per-anchor demand
+signal (FastGS `pruning_score`), reduced to `d_B(v)` by the same Partition. The
+controller fuses **additively** after per-signal scale alignment:
+
+`d(v) = EMA_τsmooth[ normalize(d_A) + λ · normalize(d_B) ]`
+
+each `normalize` = unit sum (so `λ` is meaningful and neither swamps the other;
+alignment lives at the controller fusion point, **not** in the partition-agnostic
+producers — §3). `λ=0` recovers A-only.
+
+**Additive, not multiplicative — the load-bearing reason for B's existence.** B's
+job is to surface error the *gradient proxy misses* (the §4.1 caveat). A
+multiplicative `d_A·(1+α·d_B)` gates B by A: where the gradient is blind (`d_A≈0`)
+B cannot raise demand — defeating the correction. Additive lets B independently
+light up a cell A missed.
+
+**Cost of B (must be reported).** Per B evaluation, `compute_gaussian_score_fastgs`
+does **2 forward renders per camera** in its `camlist` (forward-only, no backprop):
+one for the photometric loss, one to accumulate per-Gaussian high-error counts. So
+cost ≈ `2·|camlist|` forward renders per evaluation. Two knobs bound it: the camera
+subsample `|camlist|` and the **B-period `M`** (controller steps between B
+evaluations; `d_B` is held between refreshes). Conservative defaults (small
+subsample, periodic) keep it a few-percent overhead; full-camera every step would
+obliterate the compute-saving by-product. *(Wall-clock not yet measured; the
+A+B-vs-A training-time delta is reported in §6.3 Exp 4.)*
+
+**Fallback (data-driven, not pre-committed):** if the ablation shows B's quality
+gain does not justify its render cost, demote B to a **validation-only** diagnostic
+(check that A's reallocation correlates with true photometric error) and ship
+A-only.
 
 ### 4.2 Aggregation to per-cell demand
 
@@ -407,19 +430,23 @@ demand-reallocation variable.
 2. **Money figure — Pareto curve:** sweep `B_total ∈ {0.25, 0.5, 1, 2}× baseline`
    → quality. Claim: our curve dominates across budgets.
 3. **Ablations:**
-   - Demand source: uniform (= Octree-GS) / gradient only / gradient + photometric.
+   - Demand source: uniform (= Octree-GS) / gradient-only (`λ=0`) / gradient+
+     photometric (`λ ∈ {0.5, 1.0}`) / photometric-only. Plus B-cost knobs
+     `|camlist|`, `M` (cost–quality trade-off; see §4.1 fusion).
      **Fairness condition:** hold the entire downstream pipeline identical across
-     arms (EMA, cadence, controller L1 normalization, floor/cap) and vary *only*
-     the raw signal source — so any quality delta is attributable to the signal's
-     informativeness, not to an incidental change of distribution shape. (No
-     per-producer distribution alignment; that would erase the shape the ablation
-     measures.)
+     arms (`τ_smooth`, cadence, controller L1 normalization, floor/cap) and vary
+     *only* the raw signal source — so any quality delta is attributable to the
+     signal's informativeness, not to an incidental change of distribution shape.
+     (No per-producer distribution alignment; that would erase the shape the
+     ablation measures.)
    - Conservation: hard / soft / none.
    - Reallocation headroom: sweep **`τ`** (`control_level` is derived from
      `τ` + `B_total`, §4.2) — granularity vs slack trade-off.
    - Controller knobs: floor/cap, `τ_smooth` (shared smoothing/gate horizon), `k`
      (gate sustain count), rate-limit sensitivity.
-4. **By-product:** training time / FPS (the compute-saving corollary).
+4. **By-product:** training time / FPS (the compute-saving corollary). Includes the
+   **A+B vs A-only training-time delta** — B's `2·|camlist|`-render cost must be
+   shown, not hidden (decides the §4.1 fusion-vs-validation fallback).
 5. **Qualitative:** per-cell Target Capacity heatmap showing capacity flowed to
    high-detail regions — also previews the future semantic version (swap heatmap
    for semantic ROI).
