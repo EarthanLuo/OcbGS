@@ -578,6 +578,15 @@ The experiment queue is organized accordingly.
     per-anchor Anchor Demand `s(a)`. Partition-agnostic.
   - `ocbgs/partition/` — Cell Membership + `control_level` derivation + the pure
     `s(a) → d(v)` segment-sum reduction. Reused verbatim by future producers.
+    **Membership is stateless**, not an incrementally-maintained map: each controller
+    step it is recomputed as `cell_idx = floor((anchor_pos − init_pos) / cell_size)`
+    — a vectorized floor-division (O(N_anchors), pure tensor, ms-scale at 10⁶), not a
+    spatial-tree lookup. Statelessness is correct whether or not anchor positions
+    move (it never holds stale state), strictly dominating an incremental `anchor→cell`
+    dict (which breaks on boundary crossing). **Assumption (asserted in config):**
+    `position_lr = 0` — Octree-GS freezes anchor positions (only `_offset` moves),
+    so an anchor's accumulated `s(a)` over a controller window belongs to a single
+    cell (no demand smearing across a boundary).
   - `ocbgs/controller/` — the pure-function `BudgetController` + plan types;
     cell-level only (decides *how many*).
   The Actuator lives as minimal-intrusion hooks in the forked `gaussian_model.py`
