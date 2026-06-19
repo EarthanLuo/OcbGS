@@ -252,6 +252,30 @@ A pure function with a hard conservation guarantee.
 **Inputs:** Demand Field `d(v)` (gradient, EMA-smoothed + periodic photometric
 correction), current Cell Occupancy `n(v)`, Capacity Budget `B_total`.
 
+**Activation & lifecycle (progressive-training coupling).** The whole demand
+controller activates **only after full progressive unlock**, for two independent
+reasons grounded in the Octree-GS code:
+1. *Blind demand field.* Anchors exist at all levels from init (`octree_sample`),
+   but progressive `set_anchor_mask` masks levels finer than the current
+   `coarse_index` out of rendering — masked anchors get no gradient/visibility, so
+   the demand field is dark at fine granularity until unlock.
+2. *Gated actuator (decisive).* The finer-spawning `ds` branch of `anchor_growing`
+   (our capacity-deepening mechanism) is itself gated on
+   `iteration > coarse_intervals[-1]` — so demand-driven finer growth physically
+   cannot execute before full unlock. Hence the gate is **full unlock**, not merely
+   "`control_level` unlocked".
+
+- **Activation iteration** = `coarse_intervals[-1]` when `progressive` (default
+  schedule: `coarse_iter = 10000` ⇒ full unlock at iter 10000), else `update_from`
+  (1500). Before it, native Octree-GS coarse→fine training runs unmodified.
+- **Reallocation window** = `(activation, update_until)` — with progressive on the
+  defaults give `(10k, 25k) ≈ 15k iters` (`adjust_anchor` only runs before
+  `update_until = 25000`). Phase 1 ramp + Phase 2 steady state must fit inside it
+  (~150 controller steps at `N=100`); if a scene needs more, raise `update_until`.
+- The Spearman gate is a natural **second layer**: at unlock the newly-lit fine
+  anchors shift the ranking, so it will not pass until the full-tree demand field
+  re-stabilizes — no premature Phase 2 at the unlock boundary.
+
 **Step 0 — native-pruning coordination (accounted, not out-of-band).**
 Octree-GS's `weed_out` is **not** a periodic pruner: it runs at init and as a
 **candidate-birth filter inside `anchor_growing`** (rejects candidates whose level
