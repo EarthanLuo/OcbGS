@@ -114,15 +114,33 @@ maintains per iteration in `training_statis` (near-zero added cost):
   (every N iters) to correct the gradient-based demand. Cost amortized; also an
   ablation axis.
 
-### 4.2 Aggregation to per-voxel demand
+### 4.2 Aggregation to per-cell demand
 
-`d(v) = Σ_{a ∈ v} s(a)`.
+**Octree structure recap.** Octree-GS samples anchors at *every* level
+`cur_level ∈ [0, levels)` on a grid of size `voxel_size / fork^cur_level`.
+Anchors at all levels **coexist**; a fine cell is one of the `fork³` children of
+its parent coarse cell. Rendering activates a subset of levels per view by camera
+distance (closer ⇒ finer levels). The detail capacity of a region is therefore
+**how deeply that region is populated** (how many fine-level anchors it holds).
 
-- **Voxel = the coarsest Octree-GS spatial cell** (a stable container). How deep
-  the octree grows within a cell *is* the capacity allocated to that cell, i.e.
-  LOD depth. "Reallocating Gaussians from low-demand to high-demand voxels"
-  literally means: low-demand cells stop growing deeper / get pruned, high-demand
-  cells grow deeper.
+**The control unit is NOT only the coarsest (level-0) cell.** Demand and capacity
+live across the hierarchy. We make the allocation granularity an explicit knob:
+
+- **`control_level`** — the octree level whose cells the controller buckets demand
+  into and allocates capacity over. Cells at a single level form a clean
+  **non-overlapping partition** (required for budget normalization and the
+  conservation invariant). Default: a mid-to-fine level, **not** level 0; tuned as
+  an ablation (coarser `control_level` ⇒ coarser reallocation + less overhead/jitter;
+  finer ⇒ finer control + more cells to manage).
+- **Per-cell demand** `d(v) = Σ_{a ∈ column(v)} s(a)`, summing the per-anchor
+  signal over all anchors (at any level) whose position falls inside control-cell
+  `v`'s spatial column.
+- **Capacity within a cell is realized at finer levels.** "Reallocating Gaussians
+  from low-demand to high-demand cells" means: low-demand cells stop growing
+  deeper / get their fine-level anchors pruned (coarsen), high-demand cells grow
+  deeper (subdivide). Capacity = occupied octree depth, controlled per cell.
+
+Throughout this document "voxel" is shorthand for a control-cell at `control_level`.
 
 ### 4.3 Budget normalization (the C part)
 
@@ -229,6 +247,8 @@ demand-reallocation variable.
    - Demand source: uniform (= Octree-GS) / A only (gradient) / A+B (gradient +
      photometric).
    - Conservation: hard / soft / none.
+   - Control granularity: `control_level` (coarse → fine) — reallocation
+     granularity vs overhead/jitter trade-off.
    - Controller knobs: floor/cap, EMA, rate-limit `k` sensitivity.
 4. **By-product:** training time / FPS (the compute-saving corollary).
 5. **Qualitative:** per-voxel capacity heatmap showing capacity flowed to
@@ -290,6 +310,14 @@ The experiment queue is organized accordingly.
 - `refered_repo/` — reference submodules, **for reference only**.
 - Trade-off accepted: no automatic upstream sync with Octree-GS (irrelevant for a
   synthesis paper).
+
+**Directory & module hygiene (hard requirement).** The structure must stay clean:
+each module has one clear responsibility and a visible boundary; no scattered
+"functions flying everywhere"; no oversized single files (split when a file grows
+past a reasonable length / does more than one thing); shallow, explicit coupling
+(`demand/` and `controller/` depend on neither each other's internals nor the CUDA
+rasterizer). This is a standing constraint on all code in this project, not a
+one-off cleanup.
 
 ## 8. Out of Scope
 
