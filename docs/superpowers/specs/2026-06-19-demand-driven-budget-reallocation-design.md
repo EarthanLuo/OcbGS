@@ -15,7 +15,7 @@ signal.
 
 This project inserts a **middle controller** that feeds the render side's detail
 demand back into training, so capacity is concentrated where detail is needed and
-withdrawn where it is not. The headline goal: **at a fixed Gaussian budget,
+withdrawn where it is not. The headline goal: **at a fixed anchor budget,
 achieve higher rendering quality than uniform allocation** (with reduced training
 compute as a natural by-product).
 
@@ -41,7 +41,7 @@ throughout.
 | # | Decision | Choice |
 |---|----------|--------|
 | D1 | Demand signal source | **Error/visibility-driven** demand field, **normalized under a global budget** (rather than camera-geometry-only or externally-fixed budget) |
-| D2 | Conserved budget | **Capacity** (total #Gaussians/anchors); compute savings reported as a by-product, not the core claim |
+| D2 | Conserved budget | **Capacity** (total #anchors; rendered Gaussians/memory derived); compute savings reported as a by-product, not the core claim |
 | D3 | Architecture | **Octree-GS as the spine**, absorbing CLoD-GS (render-side continuous opacity decay) and FastGS (importance scoring) parts as needed |
 | D4 | Demand error term | **Gradient accumulator as primary** (free per-iter), **FastGS photometric residual as refinement** (periodic) |
 | D5 | Budget conservation | **Hard upper-bound constraint** (`Σn ≤ B_total`), two emergent phases (ramp then steady-state reallocation) |
@@ -393,10 +393,16 @@ mirroring how `control_level` is derived (§4.2).
 
 **Setting `B_total`:**
 
-- Main experiments: `B_total = #Gaussians at Octree-GS convergence` → claim
-  "same budget, higher quality".
-- Sweep `B_total` over several values → quality-vs-#Gaussians Pareto curve (the
-  money figure).
+- `B_total` is an **anchor** budget (the controller conserves anchors, not rendered
+  Gaussians; rendered Gaussians = anchors × `n_offsets`, further opacity-masked, a
+  floating derived quantity).
+- Main experiments: `B_total = Octree-GS's final anchor count`, taken at training
+  end where the count is **frozen** (`adjust_anchor` stops at `update_until = 25000`,
+  so iter-25000 = final). Reproducible, unambiguous, metric-independent (not the
+  PSNR-best checkpoint — that would couple `B_total` to the baseline's metric and
+  break pure capacity-pairing). **Per-scene**, from a **fixed-seed** baseline run,
+  the exact value reported (§7.3).
+- Sweep `B_total` → quality-vs-#anchors Pareto curve (the money figure).
 
 ## 6. Evaluation Plan
 
@@ -409,24 +415,25 @@ mirroring how `control_level` is derived (§4.2).
 | CLoD-GS | continuous-LOD comparison |
 | FastGS | training-speed axis (optional) |
 
-The critical comparison is **vs Octree-GS at equal #Gaussians**, isolating the
+The critical comparison is **vs Octree-GS at equal #anchors**, isolating the
 demand-reallocation variable.
 
 ### 6.2 Metrics
 
 - Quality: PSNR / SSIM / LPIPS.
-- Budget/efficiency: **#Gaussians (controlled variable)**, memory, render FPS,
-  training time (the "less compute" by-product).
+- Budget: **#anchors (the controlled variable / budget)**.
+- Derived/secondary (reported, not controlled): rendered #Gaussians (opacity-masked),
+  memory, render FPS, training time (the "less compute" by-product).
 
 ### 6.3 Experiments
 
 1. **Main comparison — two operating points, both points on the Pareto curve:**
-   - **Matched-budget:** force equality `Σn ≡ B_total = Octree-GS converged
-     #Gaussians` (plateau off; floor fills the budget). Strictly equal #Gaussians
-     → "same budget, higher quality"; answers the "your N must match" objection.
-   - **Natural-budget:** the cap `Σn ≤ B_total` (plateau allowed). #Gaussians `≤`
+   - **Matched-budget:** force equality `Σn ≡ B_total = Octree-GS final #anchors`
+     (plateau off; floor fills the budget). Strictly equal #anchors → "same budget,
+     higher quality"; answers the "your N must match" objection.
+   - **Natural-budget:** the cap `Σn ≤ B_total` (plateau allowed). #anchors `≤`
      baseline at higher quality → "less budget, higher quality" (stronger claim;
-     #Gaussians reported explicitly).
+     #anchors reported explicitly).
 2. **Money figure — Pareto curve:** sweep `B_total ∈ {0.25, 0.5, 1, 2}× baseline`
    → quality. Claim: our curve dominates across budgets.
 3. **Ablations:**
@@ -510,7 +517,8 @@ The experiment queue is organized accordingly.
 
 - `environment.yml` (loose pins, tolerant of the server's arbitrary PyTorch
   version) + a one-shot `setup.sh` (create env, build submodule).
-- Fixed random seeds.
+- Fixed random seeds — including the seed for the baseline run that **defines each
+  scene's `B_total`** (§5); the exact per-scene `B_total` value is reported.
 - Octree-GS `arguments/` config system records every experiment's settings.
 
 ### 7.4 Repo layout (Decision D7: fork Octree-GS as body)
