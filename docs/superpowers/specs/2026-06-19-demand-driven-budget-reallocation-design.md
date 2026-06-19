@@ -80,9 +80,9 @@ targets.
       decides HOW MANY per cell (grow quota / prune count)   │
                 │ ReallocationPlan (per-cell counts)         │
                 ▼                                            ▼
-            ④ Actuator = Octree-GS anchor_growing/prune
-               grows per-cell quota; prunes the |Δ(v)| lowest-s(a)
-               anchors per cell — decides WHICH, executes
+            ④ Actuator = Octree-GS anchor_growing/prune (pure PyTorch)
+               grow: cap each cell's candidates to Δ(v) (by gradient)
+               prune: remove |Δ(v)| lowest-s(a) — decides WHICH, executes
                                 │
                                 ▼
                        anchors reallocated → back to training loop
@@ -102,10 +102,11 @@ targets.
   budget; output: a plan of per-cell *counts*). Never touches `s(a)`; works purely
   at cell level. The three-part Budget Constraint invariant (§5) is verifiable in
   isolation, no CUDA — enabling local development on Windows (see §7).
-- **④ Actuator** reuses Octree-GS's working `anchor_growing`/`prune_anchor`,
-  parameterizing the global threshold into per-cell quotas, and consumes `s(a)` to
-  pick **which** anchors to prune. Responsibility split: Controller decides *how
-  many*, Actuator decides *which*.
+- **④ Actuator** reuses Octree-GS's working `anchor_growing`/`prune_anchor` (both
+  pure PyTorch): on grow it **caps each cell's proposed candidates to `Δ(v)`** (by
+  proposing gradient) before materialization; on prune it consumes `s(a)` to pick
+  the lowest-demand anchors. Responsibility split: Controller decides *how many*,
+  Actuator decides *which* (§5).
 
 `s(a)` is computed once and fans out to two consumers (Partition's reduction and
 the Actuator's ranking); the Controller stays cell-level only.
@@ -260,11 +261,26 @@ c*(v) = clamp(B_total · d(v)/Σd, floor, cap)   # target capacity
 
 **Step 2 — translate to per-cell actuator parameters**
 
-- **Grow (Δ>0):** lower `anchor_growing`'s global `grad_threshold` per cell —
-  larger deficit ⇒ lower threshold (grows more aggressively); cap new anchors per
-  cell at `Δ(v)`.
+- **Grow (Δ>0) — count cap, not threshold tuning.** `anchor_growing` proposes
+  candidate anchors (offset-gradient-driven spawning at grid cells) under the
+  **global** threshold, unchanged. The Actuator then **caps each Control Cell to its
+  `Δ(v)` highest-(proposing-)gradient candidates**, applied **before** the
+  `cat_tensors_to_optimizer` materialization block (~`gaussian_model.py:791`) so
+  there is no optimizer churn. The per-cell *count cap* — not threshold lowering —
+  is what enforces exact counts and hence the Budget Constraint (threshold lowering
+  only changes how aggressively candidates appear, never the exact number).
+  Candidates rank by their **proposing offset gradient**, not `s(a)` (`s(a)` is
+  undefined for not-yet-created anchors; it is the prune-side signal). **No
+  force-fill:** a high-deficit cell with few candidates simply grows fewer
+  (consistent with `Σn ≤ B_total`). A per-cell "threshold map" (lowering the
+  threshold in deficit cells) is **unnecessary** given no force-fill — kept only as
+  an optional ablation.
 - **Prune (Δ<0):** in surplus cells, prune the `|Δ(v)|` lowest-`s(a)` anchors
   (reusing the demand signal for ranking; no new metric introduced).
+
+*Implementation note:* `anchor_growing`/`prune_anchor` are **pure PyTorch** (the
+only CUDA submodule is the rasterizer), so both the grow cap and the prune ranking
+are pure-Python edits on the fork — isolatable and locally unit-testable.
 
 **Step 3 — hard conservation, two emergent phases (no tuned `T_budget`)**
 
