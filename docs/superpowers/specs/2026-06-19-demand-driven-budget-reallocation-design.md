@@ -120,12 +120,51 @@ scheduled**.
 ### 4.1 Per-anchor raw signal
 
 `s(a) = error(a) × visibility(a)`, computed from accumulators Octree-GS already
-maintains per iteration in `training_statis` (near-zero added cost):
+maintains per iteration in `training_statis` (near-zero added cost). Both factors are
+**raw** (no in-producer normalization — §4.5 contract); absolute scale is removed
+once, downstream, by the controller's L1 (§4.3).
 
-- **visibility(a)** = `anchor_demon` (number of views that observed the anchor).
-- **error(a)** = **primary source A**: `offset_gradient_accum / offset_denom`
-  (per-anchor mean gradient, already accumulated every iteration).
-  - Caveat: gradient is a "should-I-densify" signal, not pure photometric error.
+- **visibility(a)** = `anchor_demon` — the raw per-anchor count of views that observed
+  the anchor (`gaussian_model.py:643`). Already per-anchor; no reduction. Kept **raw,
+  not** normalized to `[0,1]`: the observation count up-weights anchors whose error
+  affects *many* views — the FastGS `photometric_loss × accum_loss_counts` philosophy
+  — and dividing by `max(anchor_demon)` would discard exactly that multi-view weight.
+- **error(a)** = **primary source A**, reduced from the **per-offset** accumulators
+  (`offset_gradient_accum`, `offset_denom` are shape `[N_anchors·n_offsets]`, *not*
+  per-anchor) by a **masked max over offsets**:
+
+  ```
+  g_k(a)    = offset_gradient_accum[a,k] / offset_denom[a,k]              # per-offset mean grad
+  mature(k) = offset_denom[a,k] > check_interval·success_threshold·0.5    # native offset_mask, :857
+  error(a)  = max { g_k(a) : mature(k) }   (0 if a has no mature offset)
+  ```
+
+  - **Why max, not mean/sum (grounded in the actuator).** Native `anchor_growing`
+    spawns a candidate **per offset** whose mean gradient crosses the level threshold
+    (`candidate_mask = grads ≥ cur_threshold`, `:734`) — *any* high-gradient offset is
+    already a grow trigger. Max-over-offsets makes the demand signal agree with how
+    growth physically fires; mean would mask a single steep offset (the exact case
+    Octree-GS grows on); sum would bias toward high-`n_offsets` anchors and is not
+    cross-comparable. (The code's own per-anchor reduction `anchor_grads`, `:720`, is a
+    *mean* — but it serves only the orthogonal extra-level promotion, not the primary
+    grow; demand follows the primary-grow max semantics.)
+  - **Why the maturity mask, not just a divide-by-zero guard.** Max is outlier-
+    sensitive: a single 1-observation offset with a noisy large gradient would dominate.
+    The native `offset_mask` (`:857`) already gates growth on sufficiently-observed
+    offsets; reusing it filters the same immature offsets out of the max.
+  - **Caveat — A is a "should-I-densify" proxy, not photometric error, and it carries a
+    screen-space scale bias.** `grad_norm = ‖viewspace_point.grad[:2]‖` (`:652`) is a
+    *screen-space* gradient, and Octree-GS deliberately raises the grow threshold at
+    finer levels (`cur_threshold = threshold·(fork^update_ratio)^cur_level`, `:730`).
+    Both make A under-weight genuinely under-fit **fine / distant** regions whose screen
+    footprint (hence screen gradient) is small — and the controller's L1 is a unit-*sum*
+    (removes absolute scale, **preserves** relative ratios, §4.3), so it does *not* undo
+    this bias. **We do not hand-correct it inside A** (a per-level rescale would bake
+    octree geometry into the partition-agnostic producer). It is precisely the blindness
+    **source B** exists to cover (next): B is a true photometric residual, screen-scale-
+    independent, fused **additively** (below) so it can light up a fine region A misses —
+    the coarse-scale bias is one concrete instance of the "gradient proxy misses it"
+    motivation for additive (not multiplicative) B.
 - **Refinement source B**: FastGS `compute_gaussian_score_fastgs` produces
   `pruning_score = photometric_loss × accum_loss_counts` — true error × observation
   count over a sampled camera set. Used **only at the periodic controller step**
