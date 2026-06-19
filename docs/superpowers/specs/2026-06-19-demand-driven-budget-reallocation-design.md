@@ -291,10 +291,48 @@ reasons grounded in the Octree-GS code:
 - **Activation iteration** = `coarse_intervals[-1]` when `progressive` (default
   schedule: `coarse_iter = 10000` ⇒ full unlock at iter 10000), else `update_from`
   (1500). Before it, native Octree-GS coarse→fine training runs unmodified.
-- **Reallocation window** = `(activation, update_until)` — with progressive on the
-  defaults give `(10k, 25k) ≈ 15k iters` (`adjust_anchor` only runs before
-  `update_until = 25000`). Phase 1 ramp + Phase 2 steady state must fit inside it
-  (~150 controller steps at `N=100`); if a scene needs more, raise `update_until`.
+- **Reallocation window** = `(activation, update_until)` — the controller runs over
+  **exactly** Octree-GS's native densification window and **stops at `update_until`**.
+  With progressive on the defaults give `(10k, 25k) ≈ 15k iters`; Phase 1 ramp +
+  Phase 2 steady state must fit inside it (~150 controller steps at `N=100`). The
+  `(update_until, iterations)` = `(25k, 40k)` tail is **native parameter fine-tuning
+  on a frozen architecture** for ours *and* the baseline (no grow/prune, no demand
+  stats, no controller) — the structure/parameter separation is native to Octree-GS,
+  not added by us.
+
+  *The controller stops at `update_until`, not `iterations` (decision).* The demand
+  controller is a *densification policy*, so it belongs to the structure-convergence
+  phase only; the ideal terminal state is `delta → 0` (structure settled at
+  `B_total`) handed off to native fine-tuning. Verified mechanics make extending to
+  `iterations` costly and asymmetric, not free:
+  - `train.py:194` deletes `opacity_accum`, `offset_gradient_accum`, `offset_denom`
+    at `iteration == update_until`, and `training_statis` is itself gated
+    `iteration < update_until` (`train.py:178`). Extending the controller means
+    **resurrecting the error channel** (`offset_gradient_accum / offset_denom` feed
+    our `error(a)`; the `anchor_demon` visibility counter survives untouched) *and*
+    keeping `training_statis` accumulating for 15k extra iters — VRAM + per-iter cost
+    the tail otherwise sheds. Two intrusion points, not one.
+  - An "idle" controller in the tail still pays the **demand-evaluation cost** every
+    `M` steps — including FastGS's `2·|camlist|` forward renders (§4.1) — for zero
+    structural change, directly eroding the compute-saving by-product (§6.3 Exp 4).
+  - `B_total` is the **baseline's final anchor count at `update_until`** (§5 *Setting
+    `B_total`*). Extending only ours to `iterations` densifies under a different
+    schedule than the count was measured under → breaks the equal-`#anchors`
+    isolation. `update_until` therefore stays a **single shared knob** that moves the
+    controller window and the baseline densification window **together**.
+
+  *Scenario-B guardrail (Phase 2 not reached in-window).* Do **not** assume 150 steps
+  always suffices. `B_total` = the baseline's *final* count, and the baseline uses
+  roughly the whole window to reach it under the shared candidate-supply rate (we
+  **cap, never force-fill** — §5 grow), so the ramp alone can consume most of the
+  window, leaving little room for Phase 2. The tight case is **progressive +
+  high-skew (BungeeNeRF)**: 150 steps *and* the most reallocation to do. Mitigation
+  is **per-scene, not a global extension**: log whether Phase 2 was reached by
+  `update_until`; if a scene systematically fails, raise `update_until` **for that
+  scene and its baseline together** (re-measuring `B_total`), preserving symmetry.
+  Tuning ramp knobs (`r%`, floor/cap) only helps when the rate-limit is binding; if
+  candidate supply is the binding constraint, **more steps — not faster steps** — is
+  the honest lever.
 - The Spearman gate is a natural **second layer**: at unlock the newly-lit fine
   anchors shift the ranking, so it will not pass until the full-tree demand field
   re-stabilizes — no premature Phase 2 at the unlock boundary.
