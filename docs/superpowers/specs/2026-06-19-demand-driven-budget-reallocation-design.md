@@ -45,7 +45,7 @@ throughout.
 | D3 | Architecture | **Octree-GS as the spine**, absorbing CLoD-GS (render-side continuous opacity decay) and FastGS (importance scoring) parts as needed |
 | D4 | Demand error term | **Gradient accumulator as primary** (free per-iter), **FastGS photometric residual as refinement** (periodic) |
 | D5 | Budget conservation | **Hard upper-bound constraint** (`Σn ≤ B_total`), two emergent phases (ramp then steady-state reallocation) |
-| D6 | Evaluation scale | **Standard benchmarks + one large-scale highlight scene** |
+| D6 | Evaluation scale | **Standard benchmarks (near-uniform control) + BungeeNeRF** as the large-scale highlight (chosen to maximize demand non-uniformity; MatrixCity dropped as near-uniform) |
 | D7 | Repo strategy | **Fork Octree-GS as project body** (`ocbgs/`); reference repos remain submodules for reference only |
 
 ## 3. System Architecture
@@ -359,11 +359,28 @@ demand-reallocation variable.
 
 ### 6.4 Datasets (Decision D6: standard + one large highlight)
 
-- Standard: Mip-NeRF360, Tanks & Temples, Deep Blending — the expected benchmark
-  tables (main table + Pareto + ablations).
-- One large-scale highlight scene (MatrixCity aerial *or* a BungeeNeRF multi-scale
-  scene) — a single "scales to large scenes" figure/small table, where the
-  budget-scarcity story is strongest.
+**Selection principle:** the highlight scene is chosen to **maximize demand-field
+non-uniformity** — the regime where reallocation has the most leverage. A uniform
+demand field gives `c*(v) → B_total/N_active` (the controller degrades to uniform
+allocation), so leverage grows with skew.
+
+- **Standard: Mip-NeRF360, Tanks & Temples, Deep Blending** — the expected benchmark
+  tables (main comparison + Pareto + ablations). These sit at the **near-uniform**
+  end, so they double as the **graceful-degradation control**: we should match the
+  baseline where there is nothing to reallocate (no harm).
+- **Large-scale highlight: BungeeNeRF** (multi-scale, satellite→ground). Its extreme
+  scale variation makes the demand field **highly non-uniform** (far = low demand,
+  near = high detail), the strongest stage for the budget-reallocation story.
+  Supported out of the box by the Octree-GS base (`train_bungeenerf.sh`).
+- **MatrixCity dropped.** Aerial city capture is single-scale and geometrically
+  regular ⇒ near-uniform demand ⇒ the method has no leverage; it is the wrong stage
+  and invites the "why would reallocation help on a uniform scene?" objection. The
+  standard benchmarks already cover the uniform end, so a second large uniform scene
+  adds cost without evidence (YAGNI).
+
+The narrative closes in one line: **the more skewed the demand, the more we win** —
+near-uniform standard scenes ⇒ ≈ baseline (no harm); non-uniform BungeeNeRF ⇒ ≫
+baseline.
 
 ## 7. Engineering & Environment
 
