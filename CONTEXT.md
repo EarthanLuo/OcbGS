@@ -48,9 +48,13 @@ A resource quantity, not a rule.
 _Avoid_: budget (bare), capacity (bare)
 
 **Budget Constraint**:
-The hard conservation rule `Σ n(v) ≡ B_total` — total anchors stay pinned at the
-Capacity Budget in steady state.
-_Avoid_: budget (bare), conservation
+The hard upper-bound rule `Σ n(v) ≤ B_total` — total anchors never exceed the
+Capacity Budget. Enforced in steady state by a three-part invariant: (i) the
+reallocation conserves exactly (slots freed = slots filled), (ii) the total stays
+`≤ B_total`, and (iii) when capacity is fully demand-justified (binding) the total
+equals `B_total`. The slack below `B_total` (plateau) is honest, not padded with
+low-value anchors.
+_Avoid_: budget (bare), conservation, equality constraint
 
 **Cell Occupancy** (`n(v)`):
 The number of anchors a Control Cell currently holds (anchors with Cell Membership

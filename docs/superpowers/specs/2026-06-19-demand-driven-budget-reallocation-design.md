@@ -43,7 +43,7 @@ honored throughout.
 | D2 | Conserved budget | **Capacity** (total #Gaussians/anchors); compute savings reported as a by-product, not the core claim |
 | D3 | Architecture | **Octree-GS as the spine**, absorbing CLoD-GS (render-side continuous opacity decay) and FastGS (importance scoring) parts as needed |
 | D4 | Demand error term | **Gradient accumulator as primary** (free per-iter), **FastGS photometric residual as refinement** (periodic) |
-| D5 | Budget conservation | **Hard constraint**, two-phase (ramp then steady-state reallocation) |
+| D5 | Budget conservation | **Hard upper-bound constraint** (`Σn ≤ B_total`), two emergent phases (ramp then steady-state reallocation) |
 | D6 | Evaluation scale | **Standard benchmarks + one large-scale highlight scene** |
 | D7 | Repo strategy | **Fork Octree-GS as project body** (`ocbgs/`); reference repos remain submodules for reference only |
 
@@ -237,22 +237,48 @@ c*(v) = clamp(B_total · d(v)/Σd, floor, cap)   # target capacity
 - **Prune (Δ<0):** in surplus cells, prune the `|Δ(v)|` lowest-`s(a)` anchors
   (reusing the demand signal for ranking; no new metric introduced).
 
-**Step 3 — hard conservation, two-phase**
+**Step 3 — hard conservation, two emergent phases (no tuned `T_budget`)**
 
-- **Phase 1 — ramp (`iter < T_budget`):** total grows from initial toward
-  `B_total` with no forced pruning (fill the budget first).
-- **Phase 2 — steady state (`iter ≥ T_budget`):** **prune surplus to free P
-  slots, then redistribute exactly P slots to deficit cells proportional to
-  Δ⁺.** Total is pinned exactly at `B_total`.
+The switch is **state-triggered, not a magic iteration count** (a fixed count
+mis-fires both ways: too early prunes immature anchors, too late forces a huge
+overshoot prune).
 
-⇒ `Σ n(v) ≡ B_total` holds literally and is unit-testable. Phase split avoids
-starving early training.
+- **Phase 1 — demand-guided ramp:** total grows toward `B_total`, guided by demand,
+  with no forced pruning. As `N_total` nears `B_total`, growth is **budget-aware**:
+  the crossing step's grow quota is scaled by a single global factor
+  `p = (B_total − N_total) / Σ Δ⁺` so the total lands exactly on `B_total` instead
+  of overshooting (**proportional** clamp — fair, no sampling bias while the demand
+  signal may still be immature). Once at `B_total`, `p → 0` naturally **freezes
+  structure** so anchors keep training to maturity until the gate opens.
+- **Phase switch (emergent):** enter Phase 2 when **`N_total ≥ B_total` AND the
+  demand ranking has stabilized** — Spearman rank correlation of `d(v)` between
+  consecutive controller windows, computed over their **shared** cells, `≥ 0.9`,
+  **sustained for k (≈2–3) consecutive windows**. Rank stability (not EMA magnitude
+  stability) is the correct gate: pruning ranks by `s(a)`, and ranks can hold while
+  magnitudes drift under global rescaling. *Plateau fallback:* if growth flattens
+  below `B_total`, enter Phase 2 under the cap (see budget semantics, §5 / §6.3).
+- **Phase 2 — steady-state reallocation:** prune surplus to free P slots, then
+  redistribute exactly P slots to deficit cells ∝ Δ⁺.
+
+**Budget semantics.** The Budget Constraint is an **upper bound** `Σ n(v) ≤ B_total`,
+not a strict equality. Plateau (the scene cannot productively use the full budget)
+is left as honest slack rather than padded with low-value anchors that would only
+hurt the reported FPS/memory.
+
+⇒ **Three-part testable invariant** (one unit test asserts all three):
+1. Phase-2 reallocation conserves exactly — `P_in = P_out`, no leak.
+2. The total stays `Σ n(v) ≤ B_total` at all times.
+3. When binding (capacity fully demand-justified), Phase-2 total `Σ n(v) ≡ B_total`.
+
+`T_budget` is removed — the phase boundary is an emergent function of system state,
+mirroring how `control_level` is derived (§4.2).
 
 **Step 4 — stability (anti-thrash)**
 
 - **Dead-band:** ignore `|Δ(v)|` below a threshold (avoid anchors cycling in/out).
 - **Rate limit:** move at most `k%` of `B_total` per controller step (e.g. 5%) for
-  smooth convergence.
+  smooth convergence. (With the budget-aware ramp there is no overshoot cliff at
+  the phase switch, so the rate limit only governs steady-state churn.)
 - EMA (§4.4) keeps the demand field itself from jumping.
 
 **Setting `B_total`:**
@@ -284,8 +310,13 @@ demand-reallocation variable.
 
 ### 6.3 Experiments
 
-1. **Main table:** `B_total = Octree-GS converged #Gaussians`, compare quality.
-   Claim: same budget, higher quality.
+1. **Main comparison — two operating points, both points on the Pareto curve:**
+   - **Matched-budget:** force equality `Σn ≡ B_total = Octree-GS converged
+     #Gaussians` (plateau off; floor fills the budget). Strictly equal #Gaussians
+     → "same budget, higher quality"; answers the "your N must match" objection.
+   - **Natural-budget:** the cap `Σn ≤ B_total` (plateau allowed). #Gaussians `≤`
+     baseline at higher quality → "less budget, higher quality" (stronger claim;
+     #Gaussians reported explicitly).
 2. **Money figure — Pareto curve:** sweep `B_total ∈ {0.25, 0.5, 1, 2}× baseline`
    → quality. Claim: our curve dominates across budgets.
 3. **Ablations:**
