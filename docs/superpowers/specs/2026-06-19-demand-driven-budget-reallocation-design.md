@@ -536,6 +536,7 @@ tuned; the §6.3 ablations validate / refine them.
 **Plan type** (the Controller's pure output):
 ```
 ReallocationPlan:
+  cell_ids: Tensor[N_cells]   # stable Control-Cell ids these entries key on (§7.7)
   delta:    Tensor[N_cells]   # int; >0 grow-up-to, <0 prune-count, 0 hold
   phase:    "ramp" | "steady" # tells the Actuator whether prune is allowed
   c_target: Tensor[N_cells]   # optional, for the capacity heatmap / debug
@@ -710,9 +711,13 @@ The experiment queue is organized accordingly.
   - `ocbgs/partition/` — Cell Membership + `control_level` derivation + the pure
     `s(a) → d(v)` segment-sum reduction. Reused verbatim by future producers.
     **Membership is stateless**, not an incrementally-maintained map: each controller
-    step it is recomputed as `cell_idx = floor((anchor_pos − init_pos) / cell_size)`
-    — a vectorized floor-division (O(N_anchors), pure tensor, ms-scale at 10⁶), not a
-    spatial-tree lookup. Statelessness is correct whether or not anchor positions
+    step it is recomputed as `cell_id = round((anchor_pos − init_pos) / cell_size)`
+    — a vectorized round-division (O(N_anchors), pure tensor, ms-scale at 10⁶), not a
+    spatial-tree lookup. **`round`, not `floor`**, to coincide with the native octree
+    grid (`gaussian_model.py:752/754` round-snap anchors to grid cells), so a Control
+    Cell equals an octree cell at `control_level` and a fine anchor maps to its true
+    `control_level` ancestor; `floor` would shift the grid half a cell and mis-assign
+    boundary anchors. Concrete signature in §7.7. Statelessness is correct whether or not anchor positions
     move (it never holds stale state), strictly dominating an incremental `anchor→cell`
     dict (which breaks on boundary crossing). **Assumption (asserted in config):**
     `position_lr = 0` — Octree-GS freezes anchor positions (only `_offset` moves),
@@ -807,6 +812,64 @@ argument** to the stock `diff_gaussian_rasterization` rasterizer. Consequences:
   absorb the decay and bias the dead-anchor GC toward pruning distant anchors,
   coupling decay with the discrete reallocation (double-counting distance). Eval-only
   application keeps them orthogonal.
+
+### 7.7 Partition interface
+
+```python
+class Partition:
+    """Owns control_level + Cell Membership + the s(a)->d(v) reduction.
+    Stateless except for the once-derived, frozen control_level (hence cell_size);
+    membership is recomputed each call (no incremental anchor->cell map, §7.4)."""
+
+    def __init__(self, B_total: int, floor: int, rho_min: float, A_min: int,
+                 voxel_size: float, fork: int, levels: int, init_pos: Tensor):
+        ...  # stores config only; control_level is NOT derived here.
+
+    def set_control_level(self, anchor_positions: Tensor) -> int:
+        ...  # Called ONCE at controller activation (post full unlock, §5). Derives
+             # control_level via §4.2 from the activation-time positions and freezes
+             # cell_size = voxel_size / fork**control_level. Forward-looking (uses
+             # B_total, not the current count) -> the Phase-1 ramp needs no re-derive.
+
+    def cell_id(self, anchor_positions: Tensor) -> Tensor:        # int64 [N]
+        ...  # round((pos - init_pos) / cell_size) flattened to an integer id -- ROUND
+             # (not floor), matching the native octree grid (gaussian_model.py:752/754)
+             # so a Control Cell == an octree cell at control_level. Pure positional =>
+             # valid on not-yet-inserted grow candidates. PUBLIC: the Actuator calls it
+             # to bin candidates for the per-cell cap.
+
+    def reduce(self, anchor_positions: Tensor, weights: Tensor,
+               exclude: Tensor | None = None) -> tuple[Tensor, Tensor]:
+        ...  # segment-sum over Cell Membership -> (active_cell_ids[N_active],
+             # values[N_active]). d(v) = reduce(pos, s_a, exclude);
+             # n(v) = reduce(pos, ones, exclude) -- occupancy is reduce with unit
+             # weights, not a separate method.
+```
+
+Key consequences (each was a defect in the first-draft signature):
+
+- **Stable `cell_id`s, not a dense `[N_cells]` vector.** The active-cell *set* changes
+  as anchors grow/prune, so a dense vector's index `i` would denote different cells
+  across steps. `reduce` returns `(active_cell_ids, values)` so the controller can
+  align cells across steps — **required** by the §5 Spearman gate ("over their shared
+  cells") and by the Actuator's `cell_id → plan-δ` lookup. `ReallocationPlan` is keyed
+  by these same ids (§5.1).
+- **`reduce`/membership take positions** (not cached) — Partition holds no per-anchor
+  state, only the frozen `control_level`/`cell_size`, preserving §7.4 statelessness.
+- **`exclude` is a pure input mask** (the dead-anchor GC set, §5 Step 0): Partition
+  mutates nothing and computes post-GC `d`/`n` analytically.
+- **The cap stays in the Actuator, not Partition.** Partition exposes `cell_id`; the
+  Actuator ranks each cell's candidates by proposing gradient and keeps the top
+  `δ⁺(v)`. A `cap_by_cell` on Partition would pull gradient-ranking + candidate
+  materialization into the membership module, breaking its single responsibility
+  (§7.4).
+- **Grow candidate in an unplanned (previously-empty) cell ⇒ zero quota** in the
+  controlled phase: the plan covers only cells active at planning time, and admitting
+  unbudgeted new-cell growth would break `Σn ≤ B_total` (no force-fill, §5).
+- **`control_level` is derived once at activation, then frozen** — not at construction
+  (pre-unlock snapshot under-populates fine levels) and never re-derived from a count
+  (`update_control_level(N_total)` is mis-typed — derivation needs positions — and
+  re-deriving would thrash the partition's `d`/`n` bookkeeping).
 
 ## 8. Out of Scope
 
