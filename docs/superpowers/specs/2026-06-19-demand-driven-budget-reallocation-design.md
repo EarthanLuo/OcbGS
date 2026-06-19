@@ -404,6 +404,54 @@ mirroring how `control_level` is derived (§4.2).
   the exact value reported (§7.3).
 - Sweep `B_total` → quality-vs-#anchors Pareto curve (the money figure).
 
+### 5.1 ReallocationPlan & controller test surface
+
+**Plan type** (the Controller's pure output):
+```
+ReallocationPlan:
+  delta:    Tensor[N_cells]   # int; >0 grow-up-to, <0 prune-count, 0 hold
+  phase:    "ramp" | "steady" # tells the Actuator whether prune is allowed
+  c_target: Tensor[N_cells]   # optional, for the capacity heatmap / debug
+```
+A single signed integer `delta` suffices (grow/prune are mutually exclusive per
+cell). **Plan vs executed:** the Controller is pure and its *plan* satisfies the
+invariants exactly; the Actuator may grow fewer than `δ⁺` (candidate-limited, no
+force-fill, §5 grow), so executed occupancy `≤` planned `≤ B_total`. **Unit tests
+assert plan properties**; the executed `≤` is an integration property.
+
+**Constraint application order** (composition is where bugs hide — it is defined,
+not incidental):
+1. raw target `t(v) = B_total · d(v)/Σd`;
+2. **water-fill** floor/cap: clamp to `[floor, cap]`, redistribute the residual
+   `B_total − Σt` over unclamped cells proportionally, iterate to fixpoint;
+3. **integer apportionment** (largest-remainder / Hamilton): floor the targets,
+   give the remaining `R = B_total − Σ⌊·⌋` units to the largest fractional
+   remainders ⇒ `Σ target = B_total` exactly and integer;
+4. `delta = target − n(v)`;
+5. **dead-band**: `|delta| < θ → 0`;
+6. **rate-limit**: scale so `Σ|delta| ≤ r%·B_total` (proportional);
+7. **steady re-balance**: dead-band/rate-limit can break `Σδ = 0`; trim the
+   marginal grow/prune to restore `Σδ = 0` (steady). Ramp instead clamps `δ ≥ 0`.
+   *(Without step 7 the "exact conservation" invariant fails whenever the dead-band
+   fires — this step is load-bearing.)*
+
+**Invariants (asserted by tests):** integer `delta`; `Σn + Σδ ≤ B_total`; steady
+`Σδ = 0` (P-in = P-out), ramp `δ ≥ 0` and `Σδ = B_total − Σn`; `floor ≤ target ≤
+cap` per active cell; **determinism** (identical input → identical plan; tie-breaks
+in apportionment and `s(a)` ranking are deterministic); **rank-monotonicity**
+(`target` non-decreasing in `d(v)`, modulo floor/cap); **fixed-point/no-thrash**
+(stable demand over consecutive steps → `δ ≈ 0`).
+
+**Test matrix** = nine single-call cases (uniform@budget, uniform-ramp, skewed,
+cap, floor, rate-limit, dead-band, empty `N_active=0`, extreme `B_total∈{0,1}`)
+**plus** the cases they miss: integer-apportionment exactness; **multiple
+constraints binding at once** (order + step-7 re-balance); over/under-constrained
+(`Σcap < B_total` undershoot; `Σfloor > B_total` must error, not silently — the
+`control_level` derivation should already preclude it, §4.2); multi-step
+no-thrash/fixed-point; determinism/tie-breaks; rank-monotonicity. Each case asserts
+both the invariant and physical reasonableness (e.g. a high-demand cell receives
+`≥` the mean allocation).
+
 ## 6. Evaluation Plan
 
 ### 6.1 Baselines
