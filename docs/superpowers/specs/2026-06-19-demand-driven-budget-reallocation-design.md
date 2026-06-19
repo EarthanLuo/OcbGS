@@ -30,10 +30,11 @@ the existing growing/prune actuator.
 
 A later paper replaces the demand producer with a **semantic / instance ROI
 extractor**: "the detail I care about is this object/semantic class." Because the
-demand producer is a pluggable interface emitting a per-cell weight field, the
-semantic version reuses the entire downstream pipeline unchanged. This design
-constraint — demand as a swappable producer of a spatial weight field — is
-honored throughout.
+demand producer is a pluggable, partition-agnostic interface emitting a per-anchor
+demand signal, the semantic version reuses the entire downstream pipeline
+(Partition → Controller → Actuator) unchanged. This design constraint — demand as
+a swappable per-anchor producer, decoupled from the spatial partition — is honored
+throughout.
 
 ## 2. Core Decisions (locked)
 
@@ -59,23 +60,29 @@ targets.
                 ┌─────────────────────────────────────────────┐
    every iter   │  Octree-GS training loop (render→loss→bp)     │
                 └───────────────┬─────────────────────────────┘
-                                │ record per-cell error × visibility
+                                │ training_statis (+ FastGS photometric)
                                 ▼
-                    ① DemandProducer (pluggable interface)
-                       produce(scene, stats) → demand[cell] = score
-                       now:    ErrorVisibilityDemand
-                       future: SemanticDemand  (same shape, drop-in)
-                                │ demand field
-                                ▼
-   every N iter      ② BudgetController (pure function, unit-testable)
-                       plan(demand, capacity, B_total) → ReallocationPlan
-                       c*(v) = clamp(B_total · normalize(demand), floor, cap)
-                       Δ(v) = c*(v) − n(v)
-                       invariant: Σ n(v) ≡ B_total  (steady state)
-                                │ per-cell grow/prune targets
-                                ▼
-                    ③ Actuator = Octree-GS anchor_growing/prune
-                       global threshold → per-cell quota from controller
+            ① DemandProducer (pluggable; partition-agnostic)
+               produce(stats) → s(a): Anchor Demand  [N_anchors]
+               now: ErrorVisibilityDemand   future: SemanticDemand
+                                │ s(a)
+                ┌───────────────┴───────────────────────────┐
+                ▼                                            │
+   ② Partition (pure reduce, no CUDA)                        │ s(a)
+      d(v) = segment_sum(s(a), Cell Membership)              │ (which-to-prune)
+      owns control_level + membership                        │
+                │ d(v): Demand Field  [N_cells]              │
+                ▼                                            │
+   every N iter ③ BudgetController (pure fn, unit-testable)  │
+      plan(d, occupancy, B_total) → ReallocationPlan         │
+      c*(v)=clamp(B_total·d/Σd, floor, cap); Δ(v)=c*(v)−n(v) │
+      invariant: Σ n(v) ≤ B_total  (§5 three-part)           │
+      decides HOW MANY per cell (grow quota / prune count)   │
+                │ ReallocationPlan (per-cell counts)         │
+                ▼                                            ▼
+            ④ Actuator = Octree-GS anchor_growing/prune
+               grows per-cell quota; prunes the |Δ(v)| lowest-s(a)
+               anchors per cell — decides WHICH, executes
                                 │
                                 ▼
                        anchors reallocated → back to training loop
@@ -83,15 +90,25 @@ targets.
 
 ### Unit boundaries (rationale)
 
-- **① DemandProducer** is an interface so the future semantic paper swaps the
-  implementation with zero changes to the skeleton.
-- **② BudgetController** is a **pure function** (inputs: demand + current capacity
-  + budget; output: a reallocation plan). The conservation invariant
-  `Σ n(v) ≡ B_total` is therefore verifiable in isolation by unit tests, with no
-  CUDA dependency — this also enables local development on Windows (see §7).
-- **③ Actuator** reuses Octree-GS's working `anchor_growing`/`prune_anchor`,
-  parameterizing the single global threshold into per-cell quotas — minimal
-  intrusion.
+- **① DemandProducer** turns raw stats into per-anchor **Anchor Demand** `s(a)` —
+  and nothing else. It is **partition-agnostic** (knows no cell/`control_level`),
+  so the future semantic producer drops in with zero skeleton change and no
+  dependency on the budget-derived `control_level`.
+- **② Partition** owns Cell Membership + `control_level` and the pure reduction
+  `s(a) → d(v)` (segment-sum). A CUDA-free `(positions, scores, membership) →
+  per-cell sums` operation — unit-testable locally on Windows, reused verbatim by
+  the semantic producer.
+- **③ BudgetController** is a **pure function** (inputs: Demand Field + occupancy +
+  budget; output: a plan of per-cell *counts*). Never touches `s(a)`; works purely
+  at cell level. The three-part Budget Constraint invariant (§5) is verifiable in
+  isolation, no CUDA — enabling local development on Windows (see §7).
+- **④ Actuator** reuses Octree-GS's working `anchor_growing`/`prune_anchor`,
+  parameterizing the global threshold into per-cell quotas, and consumes `s(a)` to
+  pick **which** anchors to prune. Responsibility split: Controller decides *how
+  many*, Actuator decides *which*.
+
+`s(a)` is computed once and fans out to two consumers (Partition's reduction and
+the Actuator's ranking); the Controller stays cell-level only.
 
 The only essential difference from Octree-GS: densify/prune changes from
 *gradient-driven, unbounded* to **demand-driven, budget-conserving, per-cell
@@ -205,15 +222,19 @@ makes the granularity reproducible across datasets/budgets: fix `τ`, and
 
 ```python
 class DemandProducer:
-    # Contract: return raw, non-negative, cross-cell-comparable Demand Scores in
-    # [0, +inf), one per active Control Cell. No units, no per-producer
-    # normalization — the single L1 normalization lives in the controller.
-    def produce(self, scene, stats) -> Tensor:  # shape [N_active]
+    # Contract: return raw, non-negative, comparable per-ANCHOR Anchor Demand s(a)
+    # in [0, +inf), one per anchor. No units, no normalization, no knowledge of
+    # cells/control_level (partition-agnostic). The s(a) → d(v) reduction lives in
+    # the Partition module; the single L1 normalization lives in the controller.
+    def produce(self, scene, stats) -> Tensor:  # shape [N_anchors] = s(a)
         ...
 
-# now:    ErrorVisibilityDemand (§4.1–4.2)
-# future: SemanticDemand (semantic mask → per-cell ROI weight, same contract)
+# now:    ErrorVisibilityDemand (§4.1)  — reads training_statis (+ FastGS)
+# future: SemanticDemand (semantic mask → per-anchor score, same contract)
 ```
+
+The per-anchor `s(a)` is reduced to the per-cell **Demand Field** `d(v)` by the
+**Partition** module (`d(v) = segment_sum(s(a), Cell Membership)`); see §3.
 
 ## 5. Budget Controller
 
@@ -385,9 +406,15 @@ The experiment queue is organized accordingly.
 
 - `ocbgs/` — a fork of the Octree-GS codebase as the working baseline, with
   **minimal-intrusion** edits to `gaussian_model.py` / `train.py` to call the
-  controller, plus two new isolated modules:
-  - `ocbgs/demand/` — `DemandProducer` interface + `ErrorVisibilityDemand`.
-  - `ocbgs/controller/` — the pure-function `BudgetController` + plan types.
+  controller and apply the plan, plus three new isolated, CUDA-free modules:
+  - `ocbgs/demand/` — `DemandProducer` interface + `ErrorVisibilityDemand`; emits
+    per-anchor Anchor Demand `s(a)`. Partition-agnostic.
+  - `ocbgs/partition/` — Cell Membership + `control_level` derivation + the pure
+    `s(a) → d(v)` segment-sum reduction. Reused verbatim by future producers.
+  - `ocbgs/controller/` — the pure-function `BudgetController` + plan types;
+    cell-level only (decides *how many*).
+  The Actuator lives as minimal-intrusion hooks in the forked `gaussian_model.py`
+  (it must mutate anchor state and decides *which* to prune via `s(a)`).
 - `refered_repo/` — reference submodules, **for reference only**.
 - Trade-off accepted: no automatic upstream sync with Octree-GS (irrelevant for a
   synthesis paper).

@@ -68,20 +68,27 @@ _Avoid_: capacity (bare), target
 
 ## Demand
 
+**Anchor Demand** (`s(a)`):
+The per-anchor raw demand signal — unitless, non-negative, comparable. The
+primitive the Demand Producer emits (`error × visibility`, or a semantic score);
+everything else is derived from it.
+_Avoid_: importance score, weight
+
 **Demand Score** (`d(v)`):
-A unitless, non-negative, cross-cell-comparable measure of how much detail a
-Control Cell needs. Relative and rank-meaningful only; carries no physical-quantity
-interpretation. The Demand Producer contract is to emit such scores in `[0, +∞)`;
-the single (L1) normalization lives in the controller and is applied identically to
-every producer.
+The per-Control-Cell demand — the sum of Anchor Demand over the cell's members
+(`d(v) = Σ_{a∈v} s(a)`). Unitless, non-negative, cross-cell-comparable; relative
+and rank-meaningful only, no physical-quantity interpretation. The single (L1)
+normalization that turns it into an allocation weight lives in the controller.
 _Avoid_: importance value, saliency
 
 **Demand Field**:
-The collection of Demand Scores over all Control Cells — the controller's sole
+The collection of Demand Scores over all Control Cells — produced by reducing
+Anchor Demand over Cell Membership (in the Partition layer) — the controller's sole
 input describing "where" detail is needed.
 _Avoid_: importance map, heatmap (the heatmap is a visualization of it)
 
 **Demand Producer**:
-The swappable component that emits a Demand Field. Current implementation is
+The swappable, **partition-agnostic** component that emits Anchor Demand (per
+anchor) — it knows nothing of cells or `control_level`. Current implementation is
 error/visibility-driven; a future one is semantic/instance-driven.
 _Avoid_: scorer, estimator
