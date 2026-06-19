@@ -118,4 +118,4 @@ This is an **integration test** property — it requires real anchor state and c
 - Definition and production of `s(a)` — ADR-0002. The Actuator only consumes `s(a)` for prune ranking.
 - Demand Field computation, A+B fusion, EMA smoothing — ADR-0002 and ADR-0004.
 - Any modification to the CUDA rasterizer — ADR-0001. All Actuator edits are pure PyTorch.
-- `B_total` measurement and Pareto sweep — ADR-0004 and eval-plan.
+- `B_total` measurement and Pareto sweep — ADR-0004; measurement protocol in `docs/eval-plan.md`.

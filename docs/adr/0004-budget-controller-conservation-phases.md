@@ -131,7 +131,7 @@ These are initial first-principles values (scaling arguments), not yet empirical
 
 `B_total` is the Capacity Budget the Controller conserves. Conceptually, it equals the baseline's final anchor count at `update_until` — the count is frozen at that point (`adjust_anchor` stops at `update_until = 25000`). This coupling is the reason the Controller window also ends at `update_until` (see lifecycle decision above): a window mismatch would densify under different schedules, breaking equal-#anchors isolation. The coupling is architectural, not an implementation convenience.
 
-The measurement procedure (fixed-seed baseline run, exact per-scene count, reporting) and the Pareto sweep (`B_total ∈ {0.25, 0.5, 1, 2}× baseline → quality-vs-#anchors curve`) belong to the evaluation plan (future `docs/eval-plan.md`, or spec §6).
+The measurement procedure (fixed-seed baseline run, exact per-scene count, reporting) and the Pareto sweep (`B_total ∈ {0.25, 0.5, 1, 2}× baseline → quality-vs-#anchors curve`) belong to the evaluation plan (`docs/eval-plan.md`).
 
 ### Step 0 — dead-anchor GC coordination
 
@@ -202,4 +202,4 @@ Each case asserts both the invariant and physical reasonableness (e.g. a high-de
 - Production of `d_A(v)` and `d_B(v)`. These are the Partition's `reduce()` output (ADR-0003).
 - Generation of the dead-anchor GC mask (opacity-dead detection). The mask is produced by the Actuator (ADR-0005); the Controller only reads post-GC `n(v)` via the `exclude` parameter.
 - Grow count-cap materialisation, prune-by-`s(a)` execution, prune-then-grow order, `adjust_anchor` body rewrite — all Actuator territory (ADR-0005).
-- `B_total` measurement procedure and Pareto sweep — evaluation plan (future `docs/eval-plan.md`, or spec §6). The definition and architectural coupling to `update_until` are retained here.
+- `B_total` measurement procedure and Pareto sweep — evaluation plan (`docs/eval-plan.md`). The definition and architectural coupling to `update_until` are retained here.
