@@ -321,6 +321,13 @@ one-off cleanup.
 
 ## 8. Out of Scope
 
+- **Interactive viewer.** Paper-stage presentation is **offline-rendered images
+  only** (figures/comparisons produced by the eval `render.py` + the §6.3 capacity
+  heatmap). No interactive viewer work is needed for the paper; Octree-GS's SIBR
+  desktop viewer is available if ad-hoc inspection helps, but is not a deliverable.
+- **Potree-style web / streaming viewer** (octree-streamed, click-to-highlight) —
+  a future engineering milestone, naturally paired with the semantic-ROI paper;
+  not part of this work.
 - Semantic / instance-driven demand producer (future paper; interface reserved).
 - Multi-GPU distributed training (single-GPU per job by design).
 - Differentiable/continuous capacity actuator (CLoD-GS opacity decay used only on
