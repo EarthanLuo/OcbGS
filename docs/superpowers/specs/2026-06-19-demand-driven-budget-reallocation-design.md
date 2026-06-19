@@ -603,6 +603,55 @@ past a reasonable length / does more than one thing); shallow, explicit coupling
 rasterizer). This is a standing constraint on all code in this project, not a
 one-off cleanup.
 
+### 7.5 Training-loop integration (hook points)
+
+The controller is embedded by **rewriting the body of `adjust_anchor`**, not an
+external wrapper — neither of these is expressible as a wrap:
+- `anchor_growing` materializes candidates inline, so the per-cell count cap must
+  be inserted **inside** it, before the `cat_tensors_to_optimizer` block
+  (`gaussian_model.py:~791`). The existing accumulator padding (`offset_denom` /
+  `offset_gradient_accum`, `:863/:869`) is computed from the *resulting* anchor
+  count, so a smaller capped count pads less automatically — the cap integrates
+  with the native bookkeeping for free.
+- the native order is grow→prune; we reorder to GC→plan→prune→grow.
+
+`anchor_growing` runs **once** per step (only from `adjust_anchor`; init uses
+`octree_sample`), so the cap constrains exactly that call. Cadence:
+`N = update_interval = 100` (the `train.py` gate `iter % update_interval == 0`);
+`adjust_anchor`'s internal `check_interval` is the maturity window (same 100,
+different role).
+
+**Two activation paths (gated by the §5 unlock):**
+- pre full-unlock (`iter ≤ coarse_intervals[-1]`, progressive): **native
+  `adjust_anchor` unchanged** — establish the multi-resolution structure.
+- post-unlock: the controller path:
+
+```
+def adjust_anchor(self, iteration, ..., controller, partition):
+    if not self.controller_active(iteration):     # §5 / §11 gate
+        return self._native_adjust_anchor(...)     # untouched
+
+    s_a       = self._read_anchor_demand()                  # s(a) from training_statis (§4.1)
+    GC_mask   = self._opacity_dead_mask()                   # Step 0 dead-anchor GC
+    n         = partition.occupancy(exclude=GC_mask)        # post-GC, analytic
+    d         = partition.reduce(s_a, exclude=GC_mask)      # d(v) = Σ_{a∈v} s(a)
+    plan      = controller.plan(d=d, occupancy=n, B_total=self.B_total)
+
+    prune_set = GC_mask | self._lowest_sa_in_surplus(plan, s_a)
+    self.prune_anchor(prune_set)                            # ONE optimizer surgery (GC ∪ demand)
+    self.anchor_growing_capped(plan, global_threshold)      # cap@:791; pad accumulators
+```
+
+- **Single `prune_anchor`** over `GC_mask ∪ demand_prune_mask` (not two calls): the
+  controller still sees post-GC occupancy (computed analytically), but the optimizer
+  is mutated once.
+- **prune-then-grow** (free P, then fill ≤ P; §5): the accumulator slice (prune)
+  precedes the pad (grow), flipping the native order.
+- `gaussian_model.adjust_anchor` is a thin orchestrator + tensor-mutation seam; the
+  pure logic lives in `ocbgs/partition` + `ocbgs/controller` (unit-tested, §5.1).
+  `train.py` stays minimal: construct `partition`/`controller`/producer once, attach
+  to the model; the existing `adjust_anchor(...)` call site is unchanged.
+
 ## 8. Out of Scope
 
 - **Interactive viewer.** Paper-stage presentation is **offline-rendered images
