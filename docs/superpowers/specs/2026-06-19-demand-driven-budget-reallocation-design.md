@@ -252,7 +252,22 @@ A pure function with a hard conservation guarantee.
 **Inputs:** Demand Field `d(v)` (gradient, EMA-smoothed + periodic photometric
 correction), current Cell Occupancy `n(v)`, Capacity Budget `B_total`.
 
-**Step 1 — surplus/deficit**
+**Step 0 — native-pruning coordination (accounted, not out-of-band).**
+Octree-GS's `weed_out` is **not** a periodic pruner: it runs at init and as a
+**candidate-birth filter inside `anchor_growing`** (rejects candidates whose level
+no camera renders, by camera-geometry LOD coverage). It never removes established
+anchors mid-training, so it cannot desync the plan — our grow count-cap simply
+applies to the post-`weed_out` survivors. The only periodic prune of *established*
+anchors is the opacity-based `prune_anchor` **inside `adjust_anchor`** — already at
+the controller cadence, not an independent force. We fold it in as a
+**demand-independent dead-anchor GC** that runs **first** each controller step; the
+Controller then reads the **post-GC** `n(v)`. Rationale: a dead anchor (collapsed
+opacity) in a *deficit* cell is never removed by the demand-prune (that cell is
+growing, not pruning), so it would waste a slot — GC is orthogonal to demand and
+must stay, but accounted. (GC only frees headroom that demand-driven growth reuses;
+the three-part invariant is preserved.) Runs in both phases; no phase toggle.
+
+**Step 1 — surplus/deficit** (on post-GC `n(v)`)
 
 ```
 c*(v) = clamp(B_total · d(v)/Σd, floor, cap)   # target capacity
