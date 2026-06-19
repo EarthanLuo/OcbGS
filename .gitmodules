@@ -1,0 +1,12 @@
+[submodule "refered_repo/FastGS"]
+	path = refered_repo/FastGS
+	url = https://github.com/fastgs/FastGS.git
+[submodule "refered_repo/gsplat"]
+	path = refered_repo/gsplat
+	url = https://github.com/nerfstudio-project/gsplat.git
+[submodule "refered_repo/CLoD-GS"]
+	path = refered_repo/CLoD-GS
+	url = https://github.com/amap-cvlab/CLoD-GS.git
+[submodule "refered_repo/Octree-GS"]
+	path = refered_repo/Octree-GS
+	url = https://github.com/city-super/Octree-GS.git
