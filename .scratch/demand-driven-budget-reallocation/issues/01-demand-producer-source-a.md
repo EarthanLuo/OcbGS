@@ -1,6 +1,6 @@
 # Issue: `ocbgs/demand/` — ErrorVisibilityDemand Source A
 
-**Status:** ready-for-agent
+**Status:** DONE
 
 ## What to build
 
@@ -31,14 +31,14 @@ Partition-agnostic: knows nothing of Control Cells, `control_level`, or the Capa
 
 ## Acceptance criteria
 
-- [ ] `DemandProducer` ABC is defined with the documented contract signature
-- [ ] `ErrorVisibilityDemand.produce()` returns a tensor of shape `[N_anchors]`, all values ≥ 0
-- [ ] With synthetic `training_statis` accumulators (known `anchor_demon`, `offset_gradient_accum`, `offset_denom`), the output matches hand-computed `error × visibility`
-- [ ] Masked-max: anchor with one mature offset at gradient 0.5 and two immature at 99 → error = 0.5 (immature filtered)
-- [ ] Anchor with all-immature offsets → error = 0 → `s(a) = 0`
-- [ ] Anchor with zero `anchor_demon` → `s(a) = 0`
-- [ ] No import of `gaussian_model` or any CUDA module in `ocbgs/demand/` (local-testable invariant)
-- [ ] `ErrorVisibilityDemand.produce()` takes `scene` and `stats` — it does NOT reach into model internals beyond what is passed
+- [x] `DemandProducer` ABC is defined with the documented contract signature
+- [x] `ErrorVisibilityDemand.produce()` returns a tensor of shape `[N_anchors]`, all values ≥ 0
+- [x] With synthetic `training_statis` accumulators (known `anchor_demon`, `offset_gradient_accum`, `offset_denom`), the output matches hand-computed `error × visibility`
+- [x] Masked-max: anchor with one mature offset at gradient 0.5 and two immature at 99 → error = 0.5 (immature filtered)
+- [x] Anchor with all-immature offsets → error = 0 → `s(a) = 0`
+- [x] Anchor with zero `anchor_demon` → `s(a) = 0`
+- [x] No import of `gaussian_model` or any CUDA module in `ocbgs/demand/` (local-testable invariant)
+- [x] `ErrorVisibilityDemand.produce()` takes `scene` and `stats` — it does NOT reach into model internals beyond what is passed
 
 ## Blocked by
 

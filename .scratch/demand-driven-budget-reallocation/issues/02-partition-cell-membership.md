@@ -1,6 +1,6 @@
 # Issue: `ocbgs/partition/` — Cell Membership + control_level derivation + segment-sum reduction
 
-**Status:** ready-for-agent
+**Status:** DONE
 
 ## What to build
 
@@ -49,15 +49,15 @@ i.e. the finest level whose Control Cells average ≥ ρ_min anchors and number 
 
 ## Acceptance criteria
 
-- [ ] `cell_id()`: a batch of known positions in a regular grid maps to correct integer cell ids (round semantics verified)
-- [ ] `cell_id()`: anchor at Control Cell boundary `.5` rounds away from origin (round, not floor — verify against native `gaussian_model.py:752/754`)
-- [ ] `reduce()`: unit weights over known positions → correct per-Control-Cell occupancy counts
-- [ ] `reduce()`: weighted values (synthetic `s(a)`) → correct per-Control-Cell segment-sums
-- [ ] `reduce()` with `exclude` mask: excluded anchors contribute zero to both count and sum
-- [ ] `set_control_level()`: coarse positions (few Control Cells) → fine level; fine positions (many Control Cells) → coarse level; obeys ρ_min and A_min constraints
-- [ ] `set_control_level()`: called once at activation, cell_size frozen thereafter; calling it again is a no-op or raises
-- [ ] Safety property: derived `control_level` satisfies `floor · N_active < B_total` (verifiable in test)
-- [ ] No CUDA import in `ocbgs/partition/` (local-testable invariant)
+- [x] `cell_id()`: a batch of known positions in a regular grid maps to correct integer cell ids (round semantics verified)
+- [x] `cell_id()`: round-snap (not floor) matching native `gaussian_model.py:752-754`. Uses `torch.round` (round-half-to-even, same as native). Verified with non-`.5` offsets (0.3/0.7/1.2/−0.4·cs); the exact `.5` boundary is intentionally NOT asserted — it is representation-dependent banker's rounding, and matching native matters more than any particular half-rounding direction.
+- [x] `reduce()`: unit weights over known positions → correct per-Control-Cell occupancy counts
+- [x] `reduce()`: weighted values (synthetic `s(a)`) → correct per-Control-Cell segment-sums
+- [x] `reduce()` with `exclude` mask: excluded anchors contribute zero to both count and sum
+- [x] `set_control_level()`: coarse positions (few Control Cells) → fine level; fine positions (many Control Cells) → coarse level; obeys ρ_min and A_min constraints
+- [x] `set_control_level()`: called once at activation, cell_size frozen thereafter; calling it again is a no-op or raises
+- [x] Safety property: derived `control_level` satisfies `floor · N_active < B_total` (verifiable in test)
+- [x] No CUDA import in `ocbgs/partition/` (local-testable invariant)
 
 ## Blocked by
 
