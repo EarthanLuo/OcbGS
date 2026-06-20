@@ -4,7 +4,7 @@
 
 ## What to build
 
-Extend the BudgetController with the **stateful temporal layer** that owns EMA smoothing of the demand field, Spearman rank-stability gating, and phase-flag decision logic. This layer implements the public `plan(cell_ids, d_A, occupancy, B_total, d_B=None)` (ABC from issue 00). Internally it: (i) EMA-smooths the demand, (ii) decides the phase flag, (iii) optionally fuses `d_B` (if provided, issue 06), then (iv) delegates to `_allocate(d, occupancy, B_total, phase)` (issue 03a). It never repeats any allocation mechanism.
+Extend the BudgetController with the **stateful temporal layer** that owns EMA smoothing of the demand field, Spearman rank-stability gating, and phase-flag decision logic. This layer implements the public `plan(cell_ids, d_A, occupancy, B_total, d_B=None)` (ABC from issue 00). Internally it: (i) EMA-smooths the demand, (ii) decides the phase flag, (iii) optionally fuses `d_B` (if provided, issue 06), then (iv) delegates to `_allocate(cell_ids, d, occupancy, B_total, phase)` (issue 03a). It never repeats any allocation mechanism.
 
 **EMA smoothing.** Smooth the demand field over `τ_smooth` Controller steps:
 

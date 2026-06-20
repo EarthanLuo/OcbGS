@@ -8,13 +8,14 @@ Implement two pure-PyTorch helper functions in `gaussian_model.py` that will be 
 
 **These are hooks in `gaussian_model.py`, NOT a separate `ocbgs/actuator/` module** (ADR-0001 D7).
 
-**`_opacity_dead_mask() -> Tensor[bool]`**
+**`_opacity_dead_mask(opacity_accum: Tensor, min_opacity: float) -> Tensor[bool]`**
 
-Identifies anchors whose opacity has collapsed below a threshold, marking them as "dead" for garbage collection (ADR-0004 Step 0). Uses `opacity_accum` (the per-anchor accumulated opacity from `training_statis`).
+Identifies anchors whose opacity has collapsed below a threshold, marking them as "dead" for garbage collection (ADR-0004 Step 0).
 
-- Input: `opacity_accum` tensor (already maintained by native Octree-GS `training_statis` at line 634)
+- Inputs: `opacity_accum: Tensor[N_anchors]` (per-anchor accumulated opacity from `training_statis`), `min_opacity: float` (threshold, from the existing Octree-GS parameter)
 - Output: boolean mask `[N_anchors]`, True = dead (should be pruned)
-- Threshold: `opacity_accum < min_opacity` where `min_opacity` is the existing Octree-GS parameter
+- Threshold: `opacity_accum < min_opacity`
+- Pure function — receives all inputs explicitly, unit-testable with synthetic tensors (no `self.` access)
 - Accounting rationale (from ADR-0004): GC is orthogonal to demand and must stay accounted. A dead anchor in a deficit cell is never removed by demand-prune (that cell is growing, not pruning), so it permanently wastes a slot without GC.
 
 **`_lowest_sa_in_surplus(plan: ReallocationPlan, s_a: Tensor, anchor_cell_ids: Tensor) -> Tensor[bool]`**
