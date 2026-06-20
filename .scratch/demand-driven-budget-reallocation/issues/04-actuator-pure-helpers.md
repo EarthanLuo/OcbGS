@@ -16,16 +16,16 @@ Identifies anchors whose opacity has collapsed below a threshold, marking them a
 - Output: boolean mask `[N_anchors]`, True = dead (should be pruned)
 - Threshold: `opacity_accum < min_opacity`
 - Pure function — receives all inputs explicitly, unit-testable with synthetic tensors (no `self.` access)
-- Accounting rationale (from ADR-0004): GC is orthogonal to demand and must stay accounted. A dead anchor in a deficit cell is never removed by demand-prune (that cell is growing, not pruning), so it permanently wastes a slot without GC.
+- Accounting rationale (from ADR-0004): GC is orthogonal to demand and must stay accounted. A dead anchor in a deficit Control Cell is never removed by demand-prune (that Control Cell is growing, not pruning), so it permanently wastes a slot without GC.
 
 **`_lowest_sa_in_surplus(plan: ReallocationPlan, s_a: Tensor, anchor_cell_ids: Tensor) -> Tensor[bool]`**
 
 In each surplus Control Cell (`δ(v) < 0`), selects the `|δ(v)|` anchors with the lowest Anchor Demand `s(a)` and returns their membership in the prune set.
 
-- Inputs: `ReallocationPlan` (from BudgetController), `s_a: Tensor[N_anchors]` (from DemandProducer), `anchor_cell_ids: Tensor[N_anchors]` (per-anchor cell ids from `Partition.cell_id()` — the anchor→cell mapping required to bin anchors into surplus cells)
+- Inputs: `ReallocationPlan` (from BudgetController), `s_a: Tensor[N_anchors]` (from DemandProducer), `anchor_cell_ids: Tensor[N_anchors]` (per-anchor cell ids from `Partition.cell_id()` — the anchor→Control Cell mapping required to bin anchors into surplus Control Cells)
 - Output: boolean mask `[N_anchors]`, True = should be demand-pruned
-- Per surplus cell: sort anchors by `s(a)` ascending, take the `|δ(v)|` lowest
-- Anchors NOT in surplus cells are always False
+- Per surplus Control Cell: sort anchors by `s(a)` ascending, take the `|δ(v)|` lowest
+- Anchors NOT in surplus Control Cells are always False
 - `s(a)` is the second fan-out consumer of `s(a)` in the architecture (ADR-0001 constraint 1): the first is Partition's reduction `s(a) → d(v)` (issue 02); the Actuator uses `s(a)` for prune ranking only
 
 **Tripwire — two ranking signals, never confused (ADR-0005 §4):**
@@ -38,15 +38,15 @@ In each surplus Control Cell (`δ(v) < 0`), selects the `|δ(v)|` anchors with t
 - [ ] `_opacity_dead_mask`: all anchors with `opacity_accum < min_opacity` → True; all above → False
 - [ ] `_opacity_dead_mask`: zero anchors → returns empty (all-False) mask, no crash
 - [ ] `_opacity_dead_mask`: all-dead → returns all-True mask
-- [ ] `_lowest_sa_in_surplus`: single surplus cell with `|δ| = 3` and 5 anchors → selects the 3 anchors with lowest `s(a)` (given correct `anchor_cell_ids` assigning all 5 to that cell)
-- [ ] `_lowest_sa_in_surplus`: multiple surplus cells — each cell independently selects its `|δ(v)|` lowest-`s(a)` anchors (verified with distinct `anchor_cell_ids`) 
-- [ ] `_lowest_sa_in_surplus`: deficit cell (δ > 0) → no anchors selected (always False)
-- [ ] `_lowest_sa_in_surplus`: surplus cell with `|δ| > n(v)` (plan asks to prune more than exist) → selects all anchors in that cell (graceful, no crash)
+- [ ] `_lowest_sa_in_surplus`: single surplus Control Cell with `|δ| = 3` and 5 anchors → selects the 3 anchors with lowest `s(a)` (given correct `anchor_cell_ids` assigning all 5 to that Control Cell)
+- [ ] `_lowest_sa_in_surplus`: multiple surplus Control Cells — each Control Cell independently selects its `|δ(v)|` lowest-`s(a)` anchors (verified with distinct `anchor_cell_ids`) 
+- [ ] `_lowest_sa_in_surplus`: deficit Control Cell (δ > 0) → no anchors selected (always False)
+- [ ] `_lowest_sa_in_surplus`: surplus Control Cell with `|δ| > n(v)` (plan asks to prune more than exist) → selects all anchors in that Control Cell (graceful, no crash)
 - [ ] `_lowest_sa_in_surplus`: `|δ| = 0` → no anchors selected, empty mask
 - [ ] Both functions are pure PyTorch (no optimizer access, no CUDA); unit-testable with synthetic tensors
 - [ ] Neither function mutates any anchor state or optimizer state
 
 ## Blocked by
 
-- 02-partition-cell-membership (needs `cell_id` to bin anchors into Control Cells for per-cell prune ranking)
+- 02-partition-cell-membership (needs `cell_id` to bin anchors into Control Cells for per-Control-Cell prune ranking)
 - 03a-controller-static-allocator (needs `ReallocationPlan` type with `cell_ids` and `delta` fields)

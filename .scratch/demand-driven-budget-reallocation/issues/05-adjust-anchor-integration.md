@@ -20,7 +20,7 @@ def adjust_anchor(self, iteration, ...):
 - `controller_active(iteration)` = True when:
   - **Progressive mode** (default): `iteration > coarse_intervals[-1]` AND `iteration ≤ update_until`.
   - **Non-progressive mode**: `iteration > update_from` (default 1500) AND `iteration ≤ update_until`.
-  Two independent reasons for the progressive activation threshold per ADR-0004 § activation: (i) the demand field is blind at fine granularity until unlock; (ii) the finer-spawning `ds` branch of `anchor_growing` is itself gated on `iteration > coarse_intervals[-1]`. In non-progressive mode, `coarse_intervals` does not exist — the `update_from` threshold replaces it (spec §5).
+   Two independent reasons for the progressive activation threshold per ADR-0004 § activation: (i) the demand field is blind at fine granularity until unlock; (ii) the finer-spawning `ds` branch of `anchor_growing` is itself gated on `iteration > coarse_intervals[-1]`. In non-progressive mode, `coarse_intervals` does not exist — the `update_from` threshold replaces it (spec §5). The gate also enforces `iteration ≤ update_until` for three principled reasons per ADR-0004 § lifecycle: (i) densification policy belongs to the structure-convergence phase only — the ideal terminal state is `δ → 0` handed off to native parameter fine-tuning; (ii) `B_total` is measured at `update_until` — extending only the controller would densify under a different schedule, breaking equal-#anchors isolation; (iii) an idle controller in the tail still pays demand evaluation cost for zero structural change.
 - Pre-unlock: dispatch to `_native_adjust_anchor` — the original Octree-GS body, moved verbatim into a private method. The baseline is unaffected.
 
 **Controller path execution order (ADR-0005 §2):**
@@ -47,11 +47,11 @@ Key constraints:
 **`anchor_growing_capped(plan, global_threshold)` — grow count-cap (ADR-0005 §5):**
 
 - Calls native `anchor_growing` logic to propose candidates by the global gradient threshold (unchanged).
-- Bins candidates by `Partition.cell_id()` (non-deficit cells → empty set).
-- In each deficit cell (`δ(v) > 0`): keep top `δ⁺(v)` candidates ranked by their **proposing offset gradient**, discard the rest.
+- Bins candidates by `Partition.cell_id()` (non-deficit Control Cells → empty set).
+- In each deficit Control Cell (`δ(v) > 0`): keep top `δ⁺(v)` candidates ranked by their **proposing offset gradient**, discard the rest.
 - The cap is inserted **before** `cat_tensors_to_optimizer` (~:791) — candidates are truncated before optimizer registration.
 - Native accumulator padding (`offset_denom`, `offset_gradient_accum`, ~:863/:869) is computed from the capped count.
-- **No force-fill:** a high-deficit cell with few candidates simply grows fewer anchors — `executed ≤ planned ≤ B_total`.
+- **No force-fill:** a high-deficit Control Cell with few candidates simply grows fewer anchors — `executed ≤ planned ≤ B_total`.
 - `weed_out` is untouched; it remains the candidate-birth filter inside `anchor_growing`. The cap applies to post-`weed_out` survivors.
 
 **Summary of changes from native `adjust_anchor`:**
@@ -67,7 +67,7 @@ Key constraints:
 
 ### Automated
 
-- [ ] `executed ≤ planned ≤ B_total`: after one Controller step on real anchor state (server), the total anchor count does not exceed `B_total`, and the executed count is ≤ the planned count
+- [ ] `executed ≤ planned ≤ B_total`: after one Controller step on real anchor state (server), the total anchor count does not exceed `B_total`, and the executed count is ≤ the planned count. This is the integration property deferred from issue 03a — the Controller's plan satisfies its invariants exactly (unit-tested in 03a); this test verifies the *executed* side with real anchor state.
 
 ### Human diff review vs native Octree-GS `adjust_anchor`
 

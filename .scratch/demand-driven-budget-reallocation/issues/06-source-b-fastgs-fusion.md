@@ -49,7 +49,7 @@ d(v) = EMA_τsmooth[ normalize(d_A) + λ · normalize(d_B) ]
 - [ ] A+B fusion in Controller: `d_A` and `d_B` are L1-normalised independently, then added with λ weighting
 - [ ] `λ = 0` → fused `d` equals `normalize(d_A)` (A-only recovery verified by unit test)
 - [ ] `λ = 1` → fused `d` equally weights both signals
-- [ ] Additive fusion: a cell with `d_A = 0` but `d_B > 0` gets non-zero fused demand (B can independently light up a cell A missed)
+- [ ] Additive fusion: a Control Cell with `d_A = 0` but `d_B > 0` gets non-zero fused demand (B can independently light up a Control Cell A missed)
 - [ ] Controller's public `plan()` signature is unchanged from issue 03b — fusion is internal
 - [ ] B render cost is explicitly logged (GPU time in ms per B evaluation, as % of total training time per Controller step)
 - [ ] Controller `M` (B refresh period): `d_B` is held constant between B evaluations; `d_A` updates every Controller step

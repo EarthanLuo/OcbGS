@@ -13,14 +13,14 @@ Create the `ocbgs/` package skeleton and wire a **degenerate (no-op) closed-loop
 **ABC interfaces (stub implementations).** Define four abstract base classes (or protocols) matching the ADR contracts, each returning identity/trivial values:
 
 - `DemandProducer` ABC — `produce(scene, stats) -> s(a) Tensor[N]`. Stub returns `torch.ones(N)`.
-- `Partition` ABC — `set_control_level(anchor_positions) -> int`, `cell_id(anchor_positions) -> Tensor[N]`, `reduce(anchor_positions, weights, exclude=None) -> (cell_ids, values)`. Stub returns a single global cell.
+- `Partition` ABC — `set_control_level(anchor_positions) -> int`, `cell_id(anchor_positions) -> Tensor[N]`, `reduce(anchor_positions, weights, exclude=None) -> (cell_ids, values)`. Stub returns a single global Control Cell.
 - `BudgetController` ABC — `plan(cell_ids, d_A, occupancy, B_total, d_B=None) -> ReallocationPlan`. `d_B` is an optional second demand field (Source B, issue 06); `phase` is determined internally by temporal state (issue 03b), not passed by the caller. Stub returns identity (delta=0, phase="ramp").
 - `ReallocationPlan` — a dataclass/NamedTuple with fields `cell_ids`, `delta`, `phase`, `c_target`.
 
 **Degenerate `adjust_anchor` controller path.** In `gaussian_model.py`, add a `controller_active(iteration)` gate that enters the degenerate path only for a single test step (e.g. `iteration == opt.update_until - 1`). The degenerate path:
 
 1. Calls `self.demand_producer.produce(...)` → gets `torch.ones`.
-2. Calls `self.partition.reduce(...)` → gets one global cell.
+2. Calls `self.partition.reduce(...)` → gets one global Control Cell.
 3. Calls `self.controller.plan(...)` → gets identity plan (delta=0).
 4. Calls native `_native_adjust_anchor` (unchanged grow/prune — no behaviour change).
 
@@ -34,6 +34,8 @@ Create the `ocbgs/` package skeleton and wire a **degenerate (no-op) closed-loop
 - [ ] `ReallocationPlan` type is defined and importable
 - [ ] One full training step on Linux server enters the degenerate controller path, runs end-to-end without error, and exits with training behaviour identical to native Octree-GS
 - [ ] The degenerate path is off by default (gated); native path is byte-equivalent to original Octree-GS
+- [ ] `environment.yml` (loose pins, tolerant of arbitrary PyTorch version) and `setup.sh` (create env, build Octree-GS CUDA submodule) are created at project root (spec §7.3)
+- [ ] Fixed random seed support for baseline runs; Octree-GS `arguments/` config system records every experiment setting (spec §7.3)
 
 ## Blocked by
 

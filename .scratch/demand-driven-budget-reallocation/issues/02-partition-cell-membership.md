@@ -41,20 +41,20 @@ control_level = max { level :
 }
 ```
 
-i.e. the finest level whose cells average ≥ ρ_min anchors and number ≥ A_min. Derived once at activation, frozen. `cell_size = voxel_size / fork**control_level`.
+i.e. the finest level whose Control Cells average ≥ ρ_min anchors and number ≥ A_min. Derived once at activation, frozen. `cell_size = voxel_size / fork**control_level`.
 
 **Reduce with `exclude` mask.** When `exclude` is provided, the masked anchors are excluded from both the count and the sum. This is the post-GC occupancy path used by the Controller (ADR-0004 Step 0).
 
-**Stable `cell_id`s, not a dense vector.** The active Control Cell set changes across training steps. `reduce` returns `(active_cell_ids, values)` so the Controller can align cells across steps (required by Spearman gate and plan lookup).
+**Stable `cell_id`s, not a dense vector.** The active Control Cell set changes across training steps. `reduce` returns `(active_cell_ids, values)` so the Controller can align Control Cells across steps (required by Spearman gate and plan lookup).
 
 ## Acceptance criteria
 
 - [ ] `cell_id()`: a batch of known positions in a regular grid maps to correct integer cell ids (round semantics verified)
-- [ ] `cell_id()`: anchor at cell boundary `.5` rounds away from origin (round, not floor — verify against native `gaussian_model.py:752/754`)
-- [ ] `reduce()`: unit weights over known positions → correct per-cell occupancy counts
-- [ ] `reduce()`: weighted values (synthetic `s(a)`) → correct per-cell segment-sums
+- [ ] `cell_id()`: anchor at Control Cell boundary `.5` rounds away from origin (round, not floor — verify against native `gaussian_model.py:752/754`)
+- [ ] `reduce()`: unit weights over known positions → correct per-Control-Cell occupancy counts
+- [ ] `reduce()`: weighted values (synthetic `s(a)`) → correct per-Control-Cell segment-sums
 - [ ] `reduce()` with `exclude` mask: excluded anchors contribute zero to both count and sum
-- [ ] `set_control_level()`: coarse positions (few cells) → fine level; fine positions (many cells) → coarse level; obeys ρ_min and A_min constraints
+- [ ] `set_control_level()`: coarse positions (few Control Cells) → fine level; fine positions (many Control Cells) → coarse level; obeys ρ_min and A_min constraints
 - [ ] `set_control_level()`: called once at activation, cell_size frozen thereafter; calling it again is a no-op or raises
 - [ ] Safety property: derived `control_level` satisfies `floor · N_active < B_total` (verifiable in test)
 - [ ] No CUDA import in `ocbgs/partition/` (local-testable invariant)
