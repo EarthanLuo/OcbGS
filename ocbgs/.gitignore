@@ -1,0 +1,33 @@
+*.pyc
+.vscode
+temp*
+outputs*
+debug*
+log*
+wandb*
+*.bak
+data
+*build/*
+*__pycache__*
+diff_rasterization/diff_rast.egg-info
+diff_rasterization/dist
+tensorboard_3d
+screenshots
+*.so
+
+# --- OcbGS additions ---
+# The server recompiles the CUDA extensions fresh via setup.sh, so all build
+# artifacts (compiled objects, egg-info, build/dist dirs) stay out of git.
+# `*.so` and `*__pycache__*` above already cover the binaries; these add the rest.
+*.egg-info/
+.eggs/
+*.egg-link
+dist/
+build/
+.pytest_cache/
+.python-version
+
+# Real-time SIBR viewer: ~16 MB of vendored C++ source, not needed for headless
+# training or the test suite. Delete this line (and run
+# `git add -f ocbgs/SIBR_viewers`) if you ever want to version the viewer.
+SIBR_viewers/

@@ -1,0 +1,23 @@
+name: ocbgs
+channels:
+  - pytorch
+  - pyg
+  - conda-forge
+  - defaults
+dependencies:
+  - cudatoolkit>=11.6
+  - plyfile>=0.8.1
+  - python>=3.7
+  - pip>=22.0
+  - pytorch>=1.12
+  - torchvision>=0.13
+  - pytorch-scatter
+  - tqdm
+  - pip:
+    - einops
+    - wandb
+    - lpips
+    - laspy
+    - jaxtyping
+    - colorama
+    - opencv-python
