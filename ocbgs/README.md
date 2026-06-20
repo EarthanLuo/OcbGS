@@ -48,6 +48,12 @@ git clone https://github.com/city-super/Octree-GS --recursive
 cd Octree-GS
 ```
 
+The CUDA rasterizer depends on the GLM submodule, which is pinned in this project under `ocbgs/submodules/diff-gaussian-rasterization/third_party/glm`. If you did not clone with `--recursive`, initialize it before building (the project's `setup.sh` does this automatically):
+
+```
+git submodule update --init ocbgs/submodules/diff-gaussian-rasterization/third_party/glm
+```
+
 2. Install dependencies
 
 ```

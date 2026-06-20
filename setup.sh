@@ -10,6 +10,9 @@ echo "=== Activating environment ==="
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate "${CONDA_ENV_NAME}"
 
+echo "=== Initializing GLM submodule (required to build the rasterizer) ==="
+git submodule update --init ocbgs/submodules/diff-gaussian-rasterization/third_party/glm
+
 echo "=== Building CUDA submodules ==="
 cd ocbgs/submodules/diff-gaussian-rasterization
 pip install -e .
