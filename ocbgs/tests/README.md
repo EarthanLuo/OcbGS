@@ -42,14 +42,14 @@ git submodule update --init ocbgs/submodules/diff-gaussian-rasterization/third_p
 
 ### 3. Server — build the environment (compiles the CUDA extensions)
 
-Run from the repository root. `setup.sh` creates the `ocbgs` conda env from `environment.yml`, initializes the GLM submodule (`git submodule update --init`), then `pip install -e .` builds `diff-gaussian-rasterization` and `simple-knn` from the vendored sources.
+`setup.sh` **reuses the image's pre-installed PyTorch** (PyTorch 2.5.1 + CUDA 12.4, Python 3.12, RTX 4090 / sm_89) — it does *not* create a conda env and does *not* reinstall torch. Activate that torch env first, then run the script from the repository root. It installs `torch-scatter` from the matching pyg wheel, the pip dependencies, initializes the GLM submodule (`git submodule update --init`), and builds `diff-gaussian-rasterization` and `simple-knn` from the vendored sources with `TORCH_CUDA_ARCH_LIST=8.9`.
 
 ```bash
-bash setup.sh                 # or: bash setup.sh <env-name>
-conda activate ocbgs
+conda activate <image-torch-env>   # the env that already has torch 2.5.1+cu124
+bash setup.sh                      # run from the repository root
 ```
 
-A successful build ends with the `=== Setup complete ===` banner and no compiler errors.
+A successful build ends with the `=== Setup complete ===` banner and no compiler errors. To build for a different GPU, override the arch: `TORCH_CUDA_ARCH_LIST="8.6" bash setup.sh`.
 
 ### 4. Server — run the full suite
 

@@ -1,18 +1,24 @@
+# OcbGS dependency manifest.
+#
+# The canonical install path is `bash setup.sh`, which REUSES the server image's
+# pre-installed PyTorch (target image: PyTorch 2.5.1 + CUDA 12.4, Python 3.12,
+# RTX 4090 / sm_89). setup.sh installs torch-scatter from the matching pyg wheel,
+# the pip dependencies listed below, initializes the GLM submodule, and compiles
+# the CUDA extensions with TORCH_CUDA_ARCH_LIST=8.9.
+#
+# This file is therefore a REFERENCE manifest, not a `conda env create` recipe:
+#   - torch / torchvision / CUDA are intentionally NOT pinned here; they come
+#     from the image and reinstalling them would conflict.
+#   - pytorch-scatter is NOT listed here: the pyg conda channel has no Python
+#     3.12 build, so setup.sh installs the matching pip wheel instead.
+#   - the CUDA submodules are intentionally absent; setup.sh builds them.
 name: ocbgs
 channels:
-  - pytorch
-  - pyg
   - conda-forge
   - defaults
 dependencies:
-  - cudatoolkit>=11.6
-  - plyfile>=0.8.1
-  - python>=3.7
+  - python>=3.12
   - pip>=22.0
-  - pytorch>=1.12
-  - torchvision>=0.13
-  - pytorch-scatter
-  - tqdm
   - pip:
     - einops
     - wandb
@@ -21,3 +27,6 @@ dependencies:
     - jaxtyping
     - colorama
     - opencv-python
+    - plyfile
+    - tqdm
+    - pytest
