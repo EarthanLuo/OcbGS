@@ -27,8 +27,8 @@ git push origin feat/00-walking-skeleton
 ### 2. Server — pull
 
 ```bash
-# first time (--recursive pulls the GLM submodule; setup.sh also handles it)
-git clone --recursive https://github.com/EarthanLuo/OcbGS.git OcbGS
+# first time (no --recursive — refered_repo/ submodules are for development only; setup.sh initializes GLM separately)
+git clone https://github.com/EarthanLuo/OcbGS.git OcbGS
 cd OcbGS
 git checkout feat/00-walking-skeleton
 
