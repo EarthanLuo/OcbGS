@@ -83,7 +83,7 @@ Note: these invariants assert *plan* properties (the Controller is a pure functi
 
 2. **N3 floor-cap feasibility**: the true safety constraint is `0.25·B_total >= floor`, which holds for any realistic `B_total` (thousands). The `Σfloor > B_total` guard covers the opposite direction. The water-fill argument in N3 should reference `0.25·B_total`, not `B_total/N_active`.
 
-3. **Rate-limit proportional scaling** (resolved): `test_proportional_scaling_preserved_when_sigma_delta_zero` uses symmetric `delta=[40,40,-40,-40]` at `B_total=320` so `scale=16/160=0.1`, `trunc→[4,4,-4,-4]` with `net=0` — step 7a is a no-op and the exact per-cell scaling ratio is asserted via `torch.equal`.
+3. **Rate-limit proportional scaling** (resolved): the core difficulty in testing step 6's per-cell scaling is that naive constructions produce post-trunc deltas with `net ≠ 0`, which step 7a then zeroes/collapses — erasing the scaling ratios. The fix uses **symmetric deltas** so `net=0` after trunc: `delta=[+40,+40,-40,-40]` at `B_total=320`, `scale=0.1`, `trunc→[4,4,-4,-4]`, `Σδ=0` → step 7a is a no-op and the ratio `4:4:4:4` is asserted directly via `torch.equal`. See `test_proportional_scaling_preserved_when_sigma_delta_zero`.
 
 4. **Hamilton R<0 dead branch**: the `else: c_target = floor_t` branch (R <= 0) is unreachable — `round(t_sum) >= Σ⌊t⌋` always holds, and the `Σfloor > B_total` guard prevents over-allocation. Add an `# unreachable` comment.
 
