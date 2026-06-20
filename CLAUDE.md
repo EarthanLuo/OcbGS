@@ -49,6 +49,19 @@ Run only tests that carry no risk of environment conflict — e.g. pure-logic un
 
 After finishing a piece of code, self-review it once first — check for correctness, edge cases, and adherence to project conventions — and only then hand it to the user for review.
 
+### Server & training environment
+
+Pitfalls hit while deploying and verifying on the AutoDL server (image: PyTorch 2.5.1 + CUDA 12.4, Python 3.12, RTX 4090 / sm_89). The full deploy + verification procedure lives in `ocbgs/tests/README.md`.
+
+- **Reuse the image's torch; do not `conda env create`.** The pinned `environment.yml` stack (py3.7 / torch1.12 / cu11.6) is the upstream Octree-GS stack and conflicts with the image. `bash setup.sh` reuses the active torch, installs `torch-scatter` from the matching pyg **pip** wheel (the pyg conda channel has no py3.12 build), and compiles the CUDA extensions with `TORCH_CUDA_ARCH_LIST=8.9`. Root `environment.yml` is a reference manifest, not a create recipe.
+- **NumPy ≥ 1.24 removed `np.int` / `np.float` / `np.bool`.** The vendored Octree-GS code still uses them (e.g. `np.int` in `load_ply_sparse_gaussian`), which crashes a render/eval/load path with `AttributeError: module 'numpy' has no attribute 'int'`. Replace with `np.int64` / `np.float32` / `bool`.
+- **The COLMAP reader picks the image folder from `--ds`, not `-i/--images`.** `scene/dataset_readers.py` maps `ds=1 → images/`, `ds=8 → images_8/` and ignores `--images`. Pass `--ds N`, not `-i images_N` (the latter silently looks in `images/` and raises `FileNotFoundError`).
+- **The Blender reader crashes on a scene with no `.ply`.** `readNerfSyntheticInfo` does `glob("*.ply")[0]` before the existence check, so a fresh nerf_synthetic scene raises `IndexError`. Prefer COLMAP datasets, or pre-place a points ply.
+- **The CUDA rasterizer backward uses `atomicAdd` → training is not bit-reproducible run-to-run, even with a fixed seed.** Never prove equivalence by diffing two independent runs' outputs; assert within a single run (snapshot/compare) or statically (source diff).
+- **Hugging Face CLI:** `huggingface-cli` is deprecated — use `hf`. `hf download --include` takes one pattern per flag (repeat `--include`; a second bare pattern is parsed as a positional filename). Keep the command on one line — pasted `\` continuations get mangled.
+- **AutoDL specifics:** put large data on the fast data disk `/root/autodl-tmp` (system disk `/` is ~30 GB); the box reaches only github / huggingface — `source /etc/network_turbo` or prefix `HF_ENDPOINT=https://hf-mirror.com` to accelerate.
+- **Exercising the degenerate controller path:** it is gated to fire once at `update_from` (default 1500); for a short smoke run override `--update_from 10 --update_interval 10 --update_until 50`. Set `OCBGS_VERIFY_DEGENERATE=1` to assert the gated block is a byte-level no-op.
+
 ### Skills
 
 These skills are sanctioned for this project; invoke the matching one for the situation rather than improvising:
