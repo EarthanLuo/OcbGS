@@ -1,6 +1,6 @@
 # Issue: Walking skeleton — package layout + ABC interfaces + degenerate closed-loop path
 
-**Status:** ready-for-human
+**Status:** done
 
 ## What to build
 
@@ -32,8 +32,8 @@ Create the `ocbgs/` package skeleton and wire a **degenerate (no-op) closed-loop
 - [x] `import ocbgs.demand`, `import ocbgs.partition`, `import ocbgs.controller` all succeed
 - [x] ABC contract tests pass locally: each stub can be instantiated, each method call returns the documented shape/dtype
 - [x] `ReallocationPlan` type is defined and importable
-- [ ] One full training step on Linux server enters the degenerate controller path, runs end-to-end without error, and exits with training behaviour identical to native Octree-GS
-- [ ] The degenerate path is off by default (gated); native path is byte-equivalent to original Octree-GS
+- [x] One full training step on Linux server enters the degenerate controller path, runs end-to-end without error, and exits with training behaviour identical to native Octree-GS
+- [x] The degenerate path is off by default (gated); native path is byte-equivalent to original Octree-GS
 - [x] `environment.yml` (loose pins, tolerant of arbitrary PyTorch version) and `setup.sh` (create env, build Octree-GS CUDA submodule) are created at project root (spec §7.3)
 - [x] Fixed random seed support for baseline runs; Octree-GS `arguments/` config system records every experiment setting (spec §7.3)
 
@@ -56,3 +56,12 @@ Verified by this run: criteria #1–#4 (imports, lazy rasterizer seam, ABC contr
 - #6 (second clause): native path byte-equivalence to original Octree-GS — requires the same real training-step comparison as #5.
 
 Status set to `ready-for-human`: the only remaining gate is a human-run training-step / byte-equivalence comparison against native Octree-GS.
+
+### 2026-06-20 — #5 / #6 verified end-to-end (all 8 criteria met, status → done)
+
+The two remaining criteria are now verified on the server (MipNeRF360 `garden`, `--ds 8`, 60 iterations, gate forced early via `--update_from 10 --update_interval 10`, fixed `--seed 0`):
+
+- **#6 static equivalence (Part A):** diff of `adjust_anchor` / `anchor_growing` / prune / save / load against `refered_repo/Octree-GS` shows the only net change is the gated block, whose `ReallocationPlan` is computed then discarded; the stubs it calls touch no RNG and mutate no model state.
+- **#5 + #6 runtime no-op (Part B):** with `OCBGS_VERIFY_DEGENERATE=1` the degenerate path printed `[VERIFY] degenerate path ENTERED at iter 20` followed by `[VERIFY] degenerate path is a byte-level NO-OP` — entry observed, and every model tensor byte-identical across the gated block. The full pipeline (train → render → eval) completed without error (PSNR 18.75 / SSIM 0.587 on the 60-iter smoke run).
+
+The verification check is committed and off by default (env-guarded in `adjust_anchor`, commit `a8a8874`), so the gated block remains a byte-level no-op in normal runs; the procedure is documented in `tests/README.md` (commit `caa8239`). A NumPy >= 1.24 incompatibility found during this run (`np.int` in `load_ply_sparse_gaussian`, which crashed render/eval) was fixed in the same commit. Procedure and findings are reproducible per `tests/README.md` "Degenerate-path equivalence check".
