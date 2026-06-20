@@ -9,7 +9,7 @@ The suite is designed to run in two places with the same command:
 - **Local (CPU / torch-cpu)** — pure-logic tests run; every test that needs the compiled CUDA extensions imports `scene.gaussian_model` / `gaussian_renderer` inside a `try/except ImportError` and is reported as **SKIPPED**. A clean local run is therefore "passed + skipped, zero failures".
 - **Server (Linux + CUDA)** — the CUDA extensions are present, nothing skips, and the full suite runs.
 
-The degenerate closed-loop *end-to-end* step (acceptance #5) and a real `bash setup.sh` build are only exercised on the server; the unit tests assert structure and wiring, not a full training step.
+The degenerate closed-loop *end-to-end* step (acceptance #5) and a real `bash setup.sh` build are only exercised on the server; the unit tests assert structure and wiring, not a full training step. The end-to-end runtime checks for #5 / #6 are documented separately under [Degenerate-path equivalence check](#degenerate-path-equivalence-check-acceptance-5--6).
 
 ## Workflow: local push → server pull → run
 
@@ -70,6 +70,95 @@ python -m pytest tests/test_00_walking_skeleton.py -v
 ```
 
 Expected locally: logic tests pass; the CUDA-dependent tests (those importing `scene.gaussian_model` / `gaussian_renderer`) report **SKIPPED**. Any **FAILED** is a real problem.
+
+## Degenerate-path equivalence check (acceptance #5 / #6)
+
+The pytest suite asserts wiring, not a training step, so it cannot by itself prove the two runtime-behaviour criteria: #5 (a full training step enters the degenerate controller path, runs end-to-end without error, behaviour identical to native Octree-GS) and the byte-equivalence clause of #6 (native path byte-equivalent to original Octree-GS). Those are verified by the two complementary checks below. Note that the CUDA rasterizer backward uses `atomicAdd`, so two separate training runs are **not** bit-reproducible even with a fixed seed — never prove equivalence by diffing the saved `.ply` of two independent runs. Both checks below sidestep that non-determinism.
+
+### Part A — Static source equivalence (#6)
+
+In the training-mutation path, the only difference between OcbGS and original Octree-GS is the gated block at the top of `adjust_anchor`, and that block computes a `ReallocationPlan` which is then discarded (never applied); the stubs it calls touch no RNG and mutate no model state. So the native trajectory is provably unaffected. Reproduce the diff on the server (or locally):
+
+```bash
+cd ~/OcbGS
+diff <(sed -n '/def anchor_growing/,/def prune_anchor/p' refered_repo/Octree-GS/scene/gaussian_model.py) \
+     <(sed -n '/def anchor_growing/,/def prune_anchor/p' ocbgs/scene/gaussian_model.py)
+```
+
+**Pass:** the only net change is the inserted `if self.controller_active(iteration): ... plan = self.controller.plan(...)` block (~10 lines); every other line of `anchor_growing` / prune / save / load is identical (the rest of the diff is pure line-number shift).
+
+### Part B — Runtime no-op assertion (#5)
+
+This runs one genuine end-to-end training step on the server through the real rasterizer + optimizer, and proves the gated block is a no-op **within a single run** (deterministic, no cross-run atomics).
+
+**1. Instrument** the gated block in `ocbgs/scene/gaussian_model.py` `adjust_anchor` (snapshot before, assert after — revert when done):
+
+```python
+        if self.controller_active(iteration):
+            # ---- TEMP VERIFICATION (remove after) ----
+            import sys
+            _snap = {k: getattr(self, k).detach().clone() for k in (
+                '_anchor', '_offset', '_anchor_feat', '_opacity', '_scaling',
+                '_rotation', '_level', '_extra_level', 'opacity_accum',
+                'anchor_demon', 'offset_denom', 'offset_gradient_accum')}
+            print(f"[VERIFY] degenerate path ENTERED at iter {iteration}", file=sys.stderr)
+            # ------------------------------------------
+            s_a = self.demand_producer.produce(self, None)
+            cell_ids, d_v = self.partition.reduce(self.get_anchor, s_a)
+            membership = self.partition.cell_id(self.get_anchor)
+            if membership.numel() > 0:
+                full_n_v = torch.bincount(membership, minlength=int(membership.max().item()) + 1)
+                n_v = full_n_v[cell_ids]
+            else:
+                n_v = torch.zeros(cell_ids.shape[0], dtype=torch.long, device=cell_ids.device)
+            plan = self.controller.plan(cell_ids, d_v, n_v, self.B_total)
+            # ---- TEMP VERIFICATION: assert no-op ----
+            for k, before in _snap.items():
+                after = getattr(self, k)
+                assert after.shape == before.shape and torch.equal(after, before), \
+                    f"[VERIFY] degenerate path MUTATED self.{k}!"
+            print("[VERIFY] degenerate path is a byte-level NO-OP", file=sys.stderr)
+            # ------------------------------------------
+```
+
+**2. Fetch a minimal COLMAP scene** from Hugging Face onto the fast data disk (`/root/autodl-tmp`, kept off the small system disk). MipNeRF360 `garden` is COLMAP-format (robust — the Blender reader in `dataset_readers.py` crashes on a scene with no `.ply`); only its `sparse/` model and the 1/8-downsampled `images_8` are needed (< 100 MB):
+
+The `hf` CLI replaces the deprecated `huggingface-cli`; pass one `--include` per pattern (a second bare pattern is parsed as a positional filename, not an include). On AutoDL, plain huggingface.co is slow — use one of the two acceleration options below.
+
+```bash
+pip install -U "huggingface_hub[cli]"
+```
+
+Option 1 — accelerate huggingface.co for the whole session (`source`, not execute; per-session, re-run in each new terminal):
+
+```bash
+source /etc/network_turbo
+hf download mileleap/mipnerf360 --repo-type dataset --include "garden/sparse/**" --include "garden/images_8/**" --local-dir /root/autodl-tmp/m360
+```
+
+Option 2 — use the hf-mirror.com mirror, no global proxy (set `HF_ENDPOINT` for just this command):
+
+```bash
+HF_ENDPOINT=https://hf-mirror.com hf download mileleap/mipnerf360 --repo-type dataset --include "garden/sparse/**" --include "garden/images_8/**" --local-dir /root/autodl-tmp/m360
+```
+
+**3. Run a short training** that fires the gate early (default `update_from` is 1500; override so it fires at iteration 20):
+
+```bash
+cd ~/OcbGS/ocbgs
+python train.py -s /root/autodl-tmp/m360/garden --ds 8 -m /root/autodl-tmp/verify_run \
+  --iterations 60 --start_stat 5 --update_from 10 --update_interval 10 \
+  --update_until 50 --test_iterations 60 --save_iterations 60 --seed 0
+```
+
+Use `--ds 8`, **not** `-i images_8`: the Octree-GS COLMAP reader (`dataset_readers.py`) ignores `--images` and selects the image folder from `--ds` (`ds=1 → images/`, `ds=8 → images_8/`). The gate fires when `iteration > update_from (10)` and `iteration % update_interval (10) == 0`, i.e. iteration 20. (To use a different resolution, fetch the matching `images_N` folder and pass `--ds N`.)
+
+**Pass (all three):**
+1. stderr shows `[VERIFY] degenerate path ENTERED at iter 20` — the path was actually entered.
+2. immediately followed by `[VERIFY] degenerate path is a byte-level NO-OP` — the gated block mutated no model tensor.
+3. training reaches iteration 60 with no exception and writes `point_cloud/` + mlp checkpoints under `/root/autodl-tmp/verify_run`.
+
+**4. Revert** the instrumentation: `git checkout ocbgs/scene/gaussian_model.py`. Clean up: `rm -rf /root/autodl-tmp/m360 /root/autodl-tmp/verify_run`.
 
 ## What the suite covers
 

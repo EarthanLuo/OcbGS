@@ -1,6 +1,6 @@
 # Issue: Walking skeleton — package layout + ABC interfaces + degenerate closed-loop path
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
 ## What to build
 
@@ -28,15 +28,31 @@ Create the `ocbgs/` package skeleton and wire a **degenerate (no-op) closed-loop
 
 ## Acceptance criteria
 
-- [ ] `import ocbgs.controller` succeeds on Windows with no CUDA toolkit (lazy rasterizer import)
-- [ ] `import ocbgs.demand`, `import ocbgs.partition`, `import ocbgs.controller` all succeed
-- [ ] ABC contract tests pass locally: each stub can be instantiated, each method call returns the documented shape/dtype
-- [ ] `ReallocationPlan` type is defined and importable
+- [x] `import ocbgs.controller` succeeds on Windows with no CUDA toolkit (lazy rasterizer import)
+- [x] `import ocbgs.demand`, `import ocbgs.partition`, `import ocbgs.controller` all succeed
+- [x] ABC contract tests pass locally: each stub can be instantiated, each method call returns the documented shape/dtype
+- [x] `ReallocationPlan` type is defined and importable
 - [ ] One full training step on Linux server enters the degenerate controller path, runs end-to-end without error, and exits with training behaviour identical to native Octree-GS
 - [ ] The degenerate path is off by default (gated); native path is byte-equivalent to original Octree-GS
-- [ ] `environment.yml` (loose pins, tolerant of arbitrary PyTorch version) and `setup.sh` (create env, build Octree-GS CUDA submodule) are created at project root (spec §7.3)
-- [ ] Fixed random seed support for baseline runs; Octree-GS `arguments/` config system records every experiment setting (spec §7.3)
+- [x] `environment.yml` (loose pins, tolerant of arbitrary PyTorch version) and `setup.sh` (create env, build Octree-GS CUDA submodule) are created at project root (spec §7.3)
+- [x] Fixed random seed support for baseline runs; Octree-GS `arguments/` config system records every experiment setting (spec §7.3)
 
 ## Blocked by
 
 None — can start immediately.
+
+## Comments
+
+### 2026-06-20 — Server test run (6/8 acceptance criteria verified)
+
+Full `test_00_walking_skeleton.py` suite run on the Linux + CUDA server (autodl image: PyTorch 2.5.1 + CUDA 12.4, Python 3.12.3, RTX 4090 / sm_89): **34 passed, 0 skipped**. Zero skips confirms the CUDA extensions (`diff-gaussian-rasterization`, `simple-knn`) compiled and the `scene.gaussian_model` / `gaussian_renderer` import seams resolve.
+
+Setup retargeted to reuse the image's preinstalled torch (commit `4838fb7`): `setup.sh` no longer runs `conda env create`; it installs `torch-scatter` from the matching pyg wheel and builds the CUDA extensions with `TORCH_CUDA_ARCH_LIST=8.9`. Root `environment.yml` demoted to a reference manifest. The stale `ocbgs/environment.yml` (py3.7 / torch1.12 Octree-GS leftover) and the vestigial `ocbgs/.git` submodule pointer were removed.
+
+Verified by this run: criteria #1–#4 (imports, lazy rasterizer seam, ABC contracts, `ReallocationPlan`), #7 (setup files present + build succeeds), #8 (seed support / `--seed`). The gating half of #6 is covered by `TestControllerActive` (fires exactly once, only inside `[update_from, update_until]`).
+
+**Still pending — not covered by the pytest suite (by design it asserts wiring, not a training step):**
+- #5: one full training step on the server entering the degenerate controller path end-to-end, with behaviour identical to native Octree-GS.
+- #6 (second clause): native path byte-equivalence to original Octree-GS — requires the same real training-step comparison as #5.
+
+Status set to `ready-for-human`: the only remaining gate is a human-run training-step / byte-equivalence comparison against native Octree-GS.
