@@ -884,6 +884,17 @@ class GaussianModel:
 
     def adjust_anchor(self, iteration, check_interval=100, success_threshold=0.8, grad_threshold=0.0002, update_ratio=0.5, extra_ratio=4.0, extra_up=0.25, min_opacity=0.005):
         if self.controller_active(iteration):
+            # Opt-in degenerate-path verification (acceptance #5/#6). Off by default, so the
+            # gated block stays a byte-level no-op; set OCBGS_VERIFY_DEGENERATE=1 to snapshot
+            # model state on entry and assert the block mutates nothing. See tests/README.md.
+            _verify_degen = os.environ.get("OCBGS_VERIFY_DEGENERATE")
+            if _verify_degen:
+                import sys
+                _degen_snap = {k: getattr(self, k).detach().clone() for k in (
+                    '_anchor', '_offset', '_anchor_feat', '_opacity', '_scaling',
+                    '_rotation', '_level', '_extra_level', 'opacity_accum',
+                    'anchor_demon', 'offset_denom', 'offset_gradient_accum')}
+                print(f"[VERIFY] degenerate path ENTERED at iter {iteration}", file=sys.stderr)
             s_a = self.demand_producer.produce(self, None)
             cell_ids, d_v = self.partition.reduce(self.get_anchor, s_a)
             membership = self.partition.cell_id(self.get_anchor)
@@ -893,6 +904,10 @@ class GaussianModel:
             else:
                 n_v = torch.zeros(cell_ids.shape[0], dtype=torch.long, device=cell_ids.device)
             plan = self.controller.plan(cell_ids, d_v, n_v, self.B_total)
+            if _verify_degen:
+                for _k, _b in _degen_snap.items():
+                    assert torch.equal(getattr(self, _k), _b), f"[VERIFY] degenerate path MUTATED self.{_k}"
+                print("[VERIFY] degenerate path is a byte-level NO-OP", file=sys.stderr)
 
         # # adding anchors
         grads = self.offset_gradient_accum / self.offset_denom # [N*k, 1]
