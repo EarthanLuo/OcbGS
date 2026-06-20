@@ -49,6 +49,10 @@ Run only tests that carry no risk of environment conflict — e.g. pure-logic un
 
 After finishing a piece of code, self-review it once first — check for correctness, edge cases, and adherence to project conventions — and only then hand it to the user for review.
 
+### Acceptance criteria
+
+Each issue's acceptance criteria must be checked item by item before the issue can be marked as passed. When closing an issue, set its **Status:** to DONE.
+
 ### Server & training environment
 
 Pitfalls hit while deploying and verifying on the AutoDL server (image: PyTorch 2.5.1 + CUDA 12.4, Python 3.12, RTX 4090 / sm_89). The full deploy + verification procedure lives in `ocbgs/tests/README.md`.
