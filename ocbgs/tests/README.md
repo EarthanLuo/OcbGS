@@ -15,7 +15,7 @@ The degenerate closed-loop *end-to-end* step (acceptance #5) and a real `bash se
 
 ### 1. Local — commit and push
 
-Build artifacts (`*.so`, `*.egg-info/`, `build/`, `__pycache__/`) and the SIBR viewer are excluded by `.gitignore`; the server recompiles the CUDA extensions from source, so nothing binary is pushed. The vendored CUDA sources, including the `glm` headers under `submodules/diff-gaussian-rasterization/third_party/glm`, **are** committed — the server compile needs no extra `git submodule` step.
+Build artifacts (`*.so`, `*.egg-info/`, `build/`, `__pycache__/`) and the SIBR viewer are excluded by `.gitignore`; the server recompiles the CUDA extensions from source, so nothing binary is pushed. The vendored CUDA sources under `submodules/diff-gaussian-rasterization` **are** committed. GLM — the rasterizer's header-only dependency — is a pinned **git submodule** at `ocbgs/submodules/diff-gaussian-rasterization/third_party/glm` (g-truc/glm @ 1.0.1), so the server must initialize it before building. `setup.sh` does this automatically; alternatively clone with `--recursive` (see step 2).
 
 ```bash
 git add -A
@@ -27,8 +27,8 @@ git push origin feat/00-walking-skeleton
 ### 2. Server — pull
 
 ```bash
-# first time
-git clone <repo-url> OcbGS
+# first time (--recursive pulls the GLM submodule; setup.sh also handles it)
+git clone --recursive <repo-url> OcbGS
 cd OcbGS
 git checkout feat/00-walking-skeleton
 
@@ -37,11 +37,12 @@ cd OcbGS
 git fetch origin
 git checkout feat/00-walking-skeleton
 git pull
+git submodule update --init ocbgs/submodules/diff-gaussian-rasterization/third_party/glm
 ```
 
 ### 3. Server — build the environment (compiles the CUDA extensions)
 
-Run from the repository root. `setup.sh` creates the `ocbgs` conda env from `environment.yml`, then `pip install -e .` builds `diff-gaussian-rasterization` and `simple-knn` from the vendored sources.
+Run from the repository root. `setup.sh` creates the `ocbgs` conda env from `environment.yml`, initializes the GLM submodule (`git submodule update --init`), then `pip install -e .` builds `diff-gaussian-rasterization` and `simple-knn` from the vendored sources.
 
 ```bash
 bash setup.sh                 # or: bash setup.sh <env-name>
