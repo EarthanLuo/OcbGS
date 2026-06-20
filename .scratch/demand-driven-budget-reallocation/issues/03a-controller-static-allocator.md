@@ -1,6 +1,6 @@
 # Issue: `ocbgs/controller/` — single-step static allocator (7-step constraint chain, internal `_allocate` with `phase` input)
 
-**Status:** ready-for-agent
+**Status:** DONE
 
 ## What to build
 
