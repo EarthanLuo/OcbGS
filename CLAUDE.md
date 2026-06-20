@@ -40,3 +40,23 @@ Similarly, for theoretical foundation and algorithmic details, reference the pap
 ### Knowledge graph
 
 `.understand-anything/knowledge-graph.json` contains a structured knowledge map of all four reference repositories — files, classes, functions, and their interrelationships. Consult it before navigating the reference code to quickly locate relevant implementations.
+
+### Development workflow
+
+Write code test-first using TDD (red-green-refactor): write a failing test case before the implementation, then write the minimal code to make it pass.
+
+Run only tests that carry no risk of environment conflict — e.g. pure-logic unit tests with no GPU/CUDA, server, or heavy-dependency requirements. For any test that might conflict with the environment (GPU/CUDA, server-only resources, large datasets, long-running training, etc.), do NOT run it: hand it to the user with exact run instructions (the command to invoke and what a passing result looks like) and let the user run it on the server.
+
+After finishing a piece of code, self-review it once first — check for correctness, edge cases, and adherence to project conventions — and only then hand it to the user for review.
+
+### Skills
+
+These skills are sanctioned for this project; invoke the matching one for the situation rather than improvising:
+
+- `superpowers:brainstorming` — before any feature, component, or behavior-change work, to pin down intent and design.
+- `superpowers:writing-plans` / `superpowers:executing-plans` — turn a settled design into a multi-step plan and execute it with review checkpoints.
+- `tdd` (`superpowers:test-driven-development`) — author the failing test case first, then the minimal implementation. Per the Development workflow above, only run tests with no environment-conflict risk; hand any GPU/CUDA/server-dependent test to the user to run.
+- `superpowers:requesting-code-review` / `code-review` — for the self-review pass and when preparing work for the user's review.
+- `diagnose` (`superpowers:systematic-debugging`) — for hard bugs, test failures, or performance regressions, before proposing a fix.
+- `grill-with-docs` — to stress-test a plan against CONTEXT.md and the ADRs, and update domain docs inline.
+- `to-prd` / `to-issues` / `triage` — to capture a PRD, break a plan into issues, and run the issue workflow (see the issue-tracker and triage-labels sections above).
