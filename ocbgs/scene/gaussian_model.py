@@ -733,7 +733,72 @@ class GaussianModel:
         self._rotation = optimizable_tensors["rotation"]
         self._level = self._level[valid_points_mask]    
         self._extra_level = self._extra_level[valid_points_mask]
-    
+
+    @staticmethod
+    def _opacity_dead_mask(opacity_accum, anchor_demon, min_opacity, maturity_min):
+        """Identify anchors whose opacity has collapsed below threshold.
+
+        ADR-0004 Step 0: demand-independent dead-anchor GC.  An anchor is
+        considered dead when its mean opacity per visit is below *min_opacity*
+        AND it has been visited enough to be considered mature.
+
+        Args:
+            opacity_accum: Tensor[N, 1] per-anchor accumulated opacity.
+            anchor_demon:  Tensor[N, 1] per-anchor visit count.
+            min_opacity:   float, opacity threshold.
+            maturity_min:  float, check_interval * success_threshold (passed
+                           by the caller so the helper owns no policy defaults).
+
+        Returns:
+            Tensor[N] boolean mask, True = dead (should be pruned).
+        """
+        mean_opacity = opacity_accum / (anchor_demon + 1e-8)
+        return ((mean_opacity < min_opacity) & (anchor_demon > maturity_min)).reshape(-1)
+
+    @staticmethod
+    def _lowest_sa_in_surplus(plan, s_a, anchor_cell_ids):
+        """In each surplus Control Cell, select |delta| anchors with lowest s(a).
+
+        ADR-0005 §4: prune-by-s(a).  The Actuator's sole consumption of s(a)
+        for prune ranking.  Grow ranks use proposing-offset gradient, never s(a).
+
+        Args:
+            plan:  ReallocationPlan with cell_ids and delta (int; <0 = surplus).
+            s_a:   Tensor[N] per-anchor demand scores.
+            anchor_cell_ids: Tensor[N] per-anchor Control Cell membership.
+
+        Returns:
+            Tensor[N] boolean mask, True = should be demand-pruned.
+        """
+        N = s_a.shape[0]
+        device = s_a.device
+        result = torch.zeros(N, dtype=torch.bool, device=device)
+
+        delta = plan.delta
+        cell_ids = plan.cell_ids
+        surplus_mask = delta < 0
+
+        for i in range(cell_ids.shape[0]):
+            if not surplus_mask[i].item():
+                continue
+            cid = cell_ids[i]
+            count = int((-delta[i]).item())
+            if count <= 0:
+                continue
+
+            in_cell = (anchor_cell_ids == cid)
+            n_in_cell = in_cell.sum().item()
+            if n_in_cell == 0:
+                continue
+
+            s_in_cell = s_a[in_cell]
+            k = min(count, n_in_cell)
+            _, top_indices = torch.topk(s_in_cell, k, largest=False)
+            cell_anchor_indices = torch.where(in_cell)[0]
+            result[cell_anchor_indices[top_indices]] = True
+
+        return result
+
     def get_remove_duplicates(self, grid_coords, selected_grid_coords_unique, use_chunk = True):
         if use_chunk:
             chunk_size = 4096

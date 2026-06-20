@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections import deque
 from dataclasses import dataclass
 from typing import Optional
 import torch
@@ -240,3 +241,150 @@ class StubBudgetController(BudgetController):
             phase="ramp",
             c_target=occupancy.clone(),
         )
+
+
+class TemporalBudgetController(StaticBudgetController):
+    """BudgetController with stateful temporal layer.
+
+    Adds EMA smoothing of the demand field, Spearman rank-stability gating,
+    phase-flag decision logic, and plateau fallback on top of the stateless
+    _allocate() inherited from StaticBudgetController.
+
+    Parameters
+    ----------
+    floor, k_cap, theta_frac, rate_limit :
+        Forwarded to StaticBudgetController (defaults match 0004 table).
+    tau_smooth : int
+        EMA smoothing time constant in Controller steps (default 3).
+    k : int
+        Number of consecutive Spearman-stable steps required to enter
+        steady phase (default 3).
+    spearman_threshold : float
+        Minimum Spearman rank correlation for the stability gate (default 0.9).
+    """
+
+    def __init__(self, floor=1, k_cap=8, theta_frac=0.25, rate_limit=0.05,
+                 tau_smooth=3, k=3, spearman_threshold=0.9):
+        super().__init__(floor=floor, k_cap=k_cap, theta_frac=theta_frac,
+                         rate_limit=rate_limit)
+        self.tau_smooth = tau_smooth
+        self.k = k
+        self.spearman_threshold = spearman_threshold
+        self._reset_state()
+
+    def _reset_state(self):
+        self._d_smooth_prev = {}
+        self._d_history = deque(maxlen=self.tau_smooth)
+        self._stable_count = 0
+        self._plateau_count = 0
+        self._n_total_prev = 0
+        self._phase = "ramp"
+        self._reached_phase2 = False
+        self._step_count = 0
+
+    def reset(self):
+        """Clear all temporal state (called on Controller activation)."""
+        self._reset_state()
+
+    @property
+    def reached_phase2(self):
+        """True if the controller has ever entered steady phase.
+
+        Consumed by the Scenario-B guardrail (issue 05 logs whether Phase 2
+        was reached by update_until).
+        """
+        return self._reached_phase2
+
+    def plan(self, cell_ids, d_A, occupancy, B_total, d_B=None):
+        C = cell_ids.shape[0]
+        device = cell_ids.device
+
+        if C == 0:
+            return self._allocate(cell_ids, d_A, occupancy, B_total, phase=self._phase)
+
+        beta = 1.0 - 1.0 / self.tau_smooth
+        d_smooth = torch.empty(C, dtype=torch.float32, device=device)
+
+        for i in range(C):
+            cid_int = cell_ids[i].item()
+            prev = self._d_smooth_prev.get(cid_int, float(d_A[i].item()))
+            d_smooth[i] = beta * prev + (1.0 - beta) * float(d_A[i].item())
+
+        # NOTE — normalize insertion point for issue 06 (A+B fusion):
+        # When d_B is not None, normalise d_A and d_B independently (L1)
+        # BEFORE the EMA step above, then feed the fused value through EMA:
+        #   d_fused(v) = normalize(d_A(v)) + lambda * normalize(d_B(v))
+        # Currently d_B=None → raw d_A flows through directly.
+
+        N_total = occupancy.sum().item()
+        stable = self._spearman_stable(cell_ids, d_smooth)
+
+        self._d_smooth_prev = {cell_ids[i].item(): float(d_smooth[i].item())
+                               for i in range(C)}
+        self._d_history.append(self._d_smooth_prev.copy())
+
+        if stable:
+            self._stable_count += 1
+        else:
+            self._stable_count = 0
+
+        if self._phase == "ramp":
+            if N_total == self._n_total_prev and stable:
+                self._plateau_count += 1
+            else:
+                self._plateau_count = 0
+
+        self._n_total_prev = N_total
+
+        if self._phase == "ramp":
+            plateau_eligible = (self._plateau_count >= self.k and
+                                self._stable_count >= self.k)
+            if (N_total >= B_total and self._stable_count >= self.k) or plateau_eligible:
+                self._phase = "steady"
+                self._reached_phase2 = True
+
+        self._step_count += 1
+
+        return self._allocate(cell_ids, d_smooth, occupancy, B_total, phase=self._phase)
+
+    def _spearman_stable(self, cell_ids, d_smooth):
+        if len(self._d_history) < self.tau_smooth:
+            return False
+
+        d_past = self._d_history[0]
+
+        current_ids = {cell_ids[i].item() for i in range(cell_ids.shape[0])}
+        past_ids = set(d_past.keys())
+        shared_ids = current_ids & past_ids
+
+        if len(shared_ids) < 2:
+            return False
+
+        shared_sorted = sorted(shared_ids)
+        x_vals = []
+        y_vals = []
+
+        cid_to_idx = {cell_ids[i].item(): i for i in range(cell_ids.shape[0])}
+        for cid in shared_sorted:
+            idx = cid_to_idx.get(cid)
+            if idx is None:
+                continue
+            x_vals.append(float(d_smooth[idx].item()))
+            y_vals.append(float(d_past[cid]))
+
+        if len(x_vals) < 2:
+            return False
+
+        x = torch.tensor(x_vals, dtype=torch.float32)
+        y = torch.tensor(y_vals, dtype=torch.float32)
+
+        if x.unique().numel() < 2 or y.unique().numel() < 2:
+            return False
+
+        x_rank = x.argsort(stable=True).argsort(stable=True).float()
+        y_rank = y.argsort(stable=True).argsort(stable=True).float()
+
+        r = torch.corrcoef(torch.stack([x_rank, y_rank]))[0, 1].item()
+        if r != r:
+            return False
+        return r >= self.spearman_threshold

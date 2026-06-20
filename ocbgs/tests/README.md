@@ -147,3 +147,41 @@ Use `--ds 8`, **not** `-i images_8`: the Octree-GS COLMAP reader (`dataset_reade
 
 - If a CUDA test unexpectedly skips on the server, the extensions did not build — re-check the `setup.sh` output before trusting a green run.
 - `setup.sh` must be run from the repository root (it `cd`s into `ocbgs/submodules/...`).
+
+## issue 03b — TemporalBudgetController
+
+All 24 tests in `test_03b_controller_temporal_layer.py` are pure-logic (no CUDA, no `gaussian_model` import) and run locally. To run:
+
+```bash
+cd ocbgs
+python -m pytest tests/test_03b_controller_temporal_layer.py -v
+```
+
+**Pass:** 24 passed, 0 skipped, 0 failed.
+
+## issue 04 — Actuator pure helpers
+
+The two helpers (`_opacity_dead_mask`, `_lowest_sa_in_surplus`) are `@staticmethod` pure PyTorch functions in `gaussian_model.py`, but the module's import chain (`torch_scatter`, `simple_knn._C`, `plyfile`, `einops`, `scene.embedding` → `PIL`) requires the full CUDA environment and packages only present after `bash setup.sh`. The 16 tests in `test_04_actuator_pure_helpers.py` must be run on the server.
+
+### Server verify
+
+```bash
+cd ~/OcbGS/ocbgs
+python -m pytest tests/test_04_actuator_pure_helpers.py -v
+```
+
+**Pass:** 16 passed, 0 skipped, 0 failed. (On Windows / CPU, all 16 SKIP with `pytest.skip("GaussianModel import requires CUDA environment")`.)
+
+### Local verify
+
+The helper function bodies contain no CUDA and can be validated by inspection:
+
+- `_opacity_dead_mask`: `mean_opacity = opacity_accum / (anchor_demon + 1e-8)` → `(mean_opacity < min_opacity) & (anchor_demon > maturity_min)` — reproduces the existing `gaussian_model.py:934-936` GC semantics exactly.
+- `_lowest_sa_in_surplus`: iterates surplus cells (`delta < 0`), uses `torch.topk(s_in_cell, min(count, n_in_cell), largest=False)` to select the lowest-`s(a)` anchors.
+
+### Issue 05 integration notes
+
+When wiring issue 05 (`adjust_anchor` rewrite):
+
+1. `_opacity_dead_mask` caller must pass `maturity_min = check_interval * success_threshold` (the helper owns no policy defaults — single source of truth at the `adjust_anchor` signature).
+2. The native `gaussian_model.py:950-952` accumulator reset (`opacity_accum`, `anchor_demon` zeroed for mature anchors) is NOT part of this helper — that is issue 05's integration responsibility.

@@ -53,6 +53,8 @@ After finishing a piece of code, self-review it once first — check for correct
 
 Each issue's acceptance criteria must be checked item by item before the issue can be marked as passed. When closing an issue, set its **Status:** to DONE.
 
+**Never check off an acceptance criterion whose test was NOT actually executed.** A `pytest.skip` (e.g. due to missing CUDA), an `ImportError` guard, or a manual "this looks correct" all count as NOT executed. Only a test that ran to completion and passed counts. If a test cannot be run in the current environment, leave the checkbox unchecked, set **Status:** back to `ready-for-agent`, and hand the issue to the user with exact run instructions for the server.
+
 ### Server & training environment
 
 Pitfalls hit while deploying and verifying on the AutoDL server (image: PyTorch 2.5.1 + CUDA 12.4, Python 3.12, RTX 4090 / sm_89). The full deploy + verification procedure lives in `ocbgs/tests/README.md`.

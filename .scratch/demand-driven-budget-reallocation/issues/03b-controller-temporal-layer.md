@@ -1,6 +1,6 @@
 # Issue: `ocbgs/controller/` — temporal/phase layer (EMA smoothing + Spearman gate + phase-flag decision + plateau fallback)
 
-**Status:** ready-for-agent
+**Status:** DONE
 
 ## What to build
 
@@ -35,19 +35,19 @@ Rank stability (not EMA magnitude stability) is the correct gate: pruning ranks 
 
 ## Acceptance criteria
 
-- [ ] EMA: a step-change in raw demand reaches 63% of the new value within `τ_smooth` steps (EMA decay property verified)
-- [ ] Spearman gate: identical demand fields → correlation = 1.0; reversed order → −1.0; random → near 0
-- [ ] Spearman gate: computed over intersection of shared `cell_ids` only (Control Cells present in both steps)
-- [ ] Phase switch: enters steady after `N_total ≥ B_total` AND Spearman gate holds for `k` consecutive steps
-- [ ] Phase switch: does NOT enter steady if Spearman dips below 0.9 during the sustain window (counter reset)
-- [ ] Phase switch: at full progressive unlock (new fine anchors appear), Spearman drops → gate resets → no premature Phase 2
-- [ ] Plateau fallback: `N_total` unchanged for `k` steps while still ramp AND Spearman holds → enters steady (phase = "steady", cap at `N_total` < `B_total`)
-- [ ] `plan()` public signature is `plan(cell_ids, d_A, occupancy, B_total, d_B=None)` — `phase` is determined internally, not passed by the caller; `d_B` is an optional second demand field (reserved for issue 06, ignored when None)
-- [ ] Multi-step fixed-point: stable demand over consecutive steps → `δ ≈ 0` across all Control Cells
-- [ ] Multi-step no-thrash: small random perturbation of demand → dead-band absorbs it → `δ` changes only for Control Cells above threshold
-- [ ] All state is reset/re-initialised on Controller activation (not carried across training restarts)
-- [ ] No CUDA import in `ocbgs/controller/` (local-testable invariant)
-- [ ] Scenario-B guardrail: log whether Phase 2 was reached by `update_until` (spec §5 — a per-scene diagnostic; if a scene systematically fails to reach Phase 2 within the window, `update_until` must be raised for that scene and its baseline together, re-measuring `B_total`)
+- [x] EMA: a step-change in raw demand reaches 63% of the new value within `τ_smooth` steps (EMA decay property verified)
+- [x] Spearman gate: identical demand fields → correlation = 1.0; reversed order → −1.0; random → near 0
+- [x] Spearman gate: computed over intersection of shared `cell_ids` only (Control Cells present in both steps)
+- [x] Phase switch: enters steady after `N_total ≥ B_total` AND Spearman gate holds for `k` consecutive steps
+- [x] Phase switch: does NOT enter steady if Spearman dips below 0.9 during the sustain window (counter reset)
+- [x] Phase switch: at full progressive unlock (new fine anchors appear), Spearman drops → gate resets → no premature Phase 2
+- [x] Plateau fallback: `N_total` unchanged for `k` steps while still ramp AND Spearman holds → enters steady (phase = "steady", cap at `N_total` < `B_total`)
+- [x] `plan()` public signature is `plan(cell_ids, d_A, occupancy, B_total, d_B=None)` — `phase` is determined internally, not passed by the caller; `d_B` is an optional second demand field (reserved for issue 06, ignored when None)
+- [x] Multi-step fixed-point: stable demand over consecutive steps → `δ ≈ 0` across all Control Cells
+- [x] Multi-step no-thrash: small random perturbation of demand → dead-band absorbs it → `δ` changes only for Control Cells above threshold
+- [x] All state is reset/re-initialised on Controller activation (not carried across training restarts)
+- [x] No CUDA import in `ocbgs/controller/` (local-testable invariant)
+- [x] Scenario-B guardrail: log whether Phase 2 was reached by `update_until` (spec §5 — a per-scene diagnostic; if a scene systematically fails to reach Phase 2 within the window, `update_until` must be raised for that scene and its baseline together, re-measuring `B_total`)
 
 ## Blocked by
 

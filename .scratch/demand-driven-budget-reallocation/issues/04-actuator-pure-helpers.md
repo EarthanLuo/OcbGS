@@ -1,6 +1,6 @@
 # Issue: Actuator pure helpers — `_opacity_dead_mask` + `_lowest_sa_in_surplus`
 
-**Status:** ready-for-agent
+**Status:** ready-for-agent  <!-- helpers implemented in gaussian_model.py, 16 tests written in test_04_actuator_pure_helpers.py; all tests require CUDA server to execute (see note under Acceptance criteria) -->
 
 ## What to build
 
@@ -45,6 +45,8 @@ In each surplus Control Cell (`δ(v) < 0`), selects the `|δ(v)|` anchors with t
 - [ ] `_lowest_sa_in_surplus`: `|δ| = 0` → no anchors selected, empty mask
 - [ ] Both functions are pure PyTorch (no optimizer access, no CUDA); unit-testable with synthetic tensors
 - [ ] Neither function mutates any anchor state or optimizer state
+
+**Note on local testability:** The two helper functions themselves are pure `@staticmethod` PyTorch (no CUDA, no optimizer access). However, they live in `gaussian_model.py` which has module-level imports of `torch_scatter`, `simple_knn._C`, `plyfile`, `einops`, and `scene.embedding` → `scene.dataset_readers` → `PIL` — a deep import chain that requires CUDA and several packages not available on Windows. As a result, the 16 unit tests are skipped on Windows (`pytest.skip` on `ImportError`) and must be verified on the CUDA server. See `ocbgs/tests/README.md` for server test procedure.
 
 ## Blocked by
 
