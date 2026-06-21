@@ -35,29 +35,27 @@ CUDA backward `atomicAdd` makes training non-bit-reproducible even with fixed se
 
 > Garden parameters: `--fork 2 --base_layer 10 --visible_threshold 0.0 --dist2level round --update_ratio 0.2`. `base_layer=10` matches upstream Mip-NeRF360 script (default -1 is adaptive); differing initialization would inflate σ.
 
-Script: `scripts/exp4_garden_baseline.sh`
+Script: `scripts/exp4_garden.sh` — single command runs all three phases sequentially.
 
-Dependency: Arm A must complete first. Arm B reads `BTOTAL_GARDEN`.
+Dependency: Phase 1 (Arm A, `--no_controller`) completes first and auto-extracts `BTOTAL_GARDEN` via `scripts/collect_results.py total_points`. Phases 2 and 3 are then automatic.
 
 ### Step 2 — Garden no-harm control
 
 A+B vs A-only: `--b_enabled --fusion_lambda 1.0 --b_camlist_size 4 --b_refresh_period 10` (M10-K4: lowest cost, liveliest signal). 5 seeds each. `--B_total $(cat BTOTAL_GARDEN)`. Verifies A+B does not degrade quality relative to A-only on a near-uniform scene (±2σ).
 
-Script: `scripts/exp4_garden_no_harm.sh`
+Script: `scripts/exp4_garden.sh` (Phase 2: Arm C vs Arm B auto-compare)
 
 ### Step 3 — BungeeNeRF baseline (B_total + σ)
 
-A-only controller, 5 seeds per scene (amsterdam / quebec / rome). Full BungeeNeRF parameters: `--progressive True --fork 2 --base_layer 10 --levels -1 --dist_ratio 0.99 --init_level -1 --extra_ratio 0.25 --extra_up 0.01`. Measures σ and `B_total` per scene. Writes `BTOTAL_<SCENE>` files.
+A-only controller, 5 seeds per scene (amsterdam / quebec / rome). Full BungeeNeRF parameters: `--progressive True --fork 2 --base_layer 10 --levels -1 --dist_ratio 0.99 --init_level -1 --extra_ratio 0.25 --extra_up 0.01`. Measures σ and `B_total` per scene.
 
-Script: `scripts/exp4_bungeenerf_baseline.sh`
+Script: `scripts/exp4_bungeenerf.sh` (Phase 1 + 2). Single command per scene — Phase 1 auto-extracts `BTOTAL_<SCENE>` from a seed-0 run.
 
 ### Step 4 — BungeeNeRF value judgment
 
-A+B (λ=1, M=10, K=16): strongest B signal. 5 seeds per scene vs A-only baseline. `--B_total $(cat BTOTAL_<SCENE>)`.
+A+B (λ=1, M=10, K=16): strongest B signal. 5 seeds per scene vs A-only baseline. Same `scripts/exp4_bungeenerf.sh` (Phase 2 Arm C + Phase 3 auto-compare).
 
 **Decision point:** if |ΔPSNR(A+B − A)| > 2σ_garden on any checkpoint → KEEP B. Otherwise → DROP B (B failed its core prediction of helping in non-uniform regions).
-
-Script: `scripts/exp4_bungeenerf_value.sh`
 
 ### Step 5 — Fidelity sweep (conditional, only if Step 4 KEEPs B)
 
@@ -86,6 +84,30 @@ Primary: PSNR / SSIM / LPIPS from `results.json` (post-training eval pass on tes
 - **BungeeNeRF scale:** 5 seeds × 3 scenes × 2 arms = 30 full runs. Single RTX 4090 serial ≈ 5 days. Batch across GPUs if available; otherwise prioritize 2 scenes (amsterdam + quebec) first and run rome only if results are borderline.
 - **B-arm variance:** `source_b.py:12` uses global `random.sample` for camlist → B-arm has an additional noise source beyond A-only's atomicAdd. σ for B-arm should be measured separately; A-only σ is the floor, not B-arm's σ.
 - **Black background bias:** `evaluate_source_b` uses fixed black background. For white-background datasets (NeRF synthetic), error map will include spurious error from bg mismatch. Not applicable to garden/BungeeNeRF (both COLMAP, black bg compatible).
+
+## Tools
+
+`scripts/collect_results.py` automates all data extraction and comparison:
+
+```
+# Read TB total_points at given iterations
+python scripts/collect_results.py total_points \
+    --glob "<output>/arm_a/seed_*" --step 25000 \
+    --aggregate mean --output-btotal BTOTAL_GARDEN
+
+# Collect PSNR/SSIM/LPIPS from results.json across seeds
+python scripts/collect_results.py metrics \
+    --glob "<output>/arm_b/seed_*" \
+    --checkpoints 7000 15000 25000 30000 \
+    --output sigma_garden.json
+
+# Compare A+B vs A-only vs sigma → KEEP/DROP
+python scripts/collect_results.py compare \
+    --a-only sigma_garden.json --a-plus-b summary_a_plus_b.json \
+    --sigma sigma_garden.json
+```
+
+All shell scripts invoke the collector automatically in Phase 3. No manual TB reading required.
 
 ## Acceptance criteria
 
