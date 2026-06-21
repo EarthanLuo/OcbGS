@@ -33,7 +33,7 @@ class TestOpacityDeadMask:
             opacity_accum, anchor_demon, min_opacity, maturity_min
         )
 
-        expected_dead = torch.tensor([False, False, True, False, False])
+        expected_dead = torch.tensor([False, False, True, False, True])
         assert torch.equal(mask, expected_dead), (
             f"opacity_dead_mask: expected {expected_dead.tolist()}, got {mask.tolist()}\n"
             f"Mean opacities: {opacity_accum.flatten() / anchor_demon.flatten()}"
@@ -43,7 +43,7 @@ class TestOpacityDeadMask:
         _requires_gm()
         N = 3
         opacity_accum = torch.tensor([[0.001], [0.001], [0.001]])
-        anchor_demon = torch.tensor([[50.0], [79.0], [80.0]])
+        anchor_demon = torch.tensor([[50.0], [79.0], [81.0]])
         min_opacity = 0.005
         maturity_min = 80.0
 
@@ -118,12 +118,12 @@ class TestLowestSAInSurplus:
 
         mask = GaussianModel._lowest_sa_in_surplus(plan, s_a, anchor_cell_ids)
 
-        expected = torch.tensor([False, True, False, True, False])
+        expected = torch.tensor([False, True, True, True, False])
         selected = torch.where(mask)[0]
         assert torch.equal(mask, expected), (
-            f"Should select anchors with lowest s(a): 0.1, 0.2; got indices {selected.tolist()}"
+            f"Should select |delta|=3 anchors with lowest s(a): 0.1, 0.2, 0.5; got indices {selected.tolist()}"
         )
-        assert s_a[selected].sum().item() == pytest.approx(0.3)
+        assert s_a[selected].sum().item() == pytest.approx(0.8)
 
     def test_multiple_surplus_cells_independent_selection(self):
         _requires_gm()
