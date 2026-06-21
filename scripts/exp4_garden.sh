@@ -11,6 +11,8 @@
 
 set -e
 
+export PYTHONWARNINGS=ignore
+
 SRC=/root/autodl-tmp/m360/garden
 DST=/root/autodl-tmp/exp4/garden
 BTOTAL_FILE="$DST/BTOTAL_GARDEN"

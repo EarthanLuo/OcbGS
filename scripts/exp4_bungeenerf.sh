@@ -13,6 +13,8 @@
 
 set -e
 
+export PYTHONWARNINGS=ignore
+
 BUNGEE_ROOT=/root/autodl-tmp/bungeenerf
 DST_ROOT=/root/autodl-tmp/exp4/bungeenerf
 ITERS=30000
