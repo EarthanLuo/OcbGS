@@ -20,7 +20,7 @@ def evaluate_source_b(model, train_cameras, pipe, bg, demand_b, partition, cfg, 
             err_delta, _ = PhotometricDemand.accumulate_view(
                 err_map, pkg["xyz"], pkg["radii"], pkg["neural_opacity"],
                 pkg["selection_mask"], cam.full_proj_transform,
-                model.n_offsets, torch.arange(N), N)
+                model.n_offsets, torch.arange(N, device=model.get_anchor.device), N)
             model.photometric_error_accum += err_delta
     render_ms = (time.perf_counter() - t0) * 1000.0
     s_b = demand_b.produce(scene=None, stats={KEY_PHOTOMETRIC_ERROR_ACCUM: model.photometric_error_accum})
