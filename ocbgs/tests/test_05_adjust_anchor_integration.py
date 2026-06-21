@@ -449,7 +449,10 @@ class TestSteadyDemandPruneIntegration:
             "fixture must form exactly 2 control cells"
 
         n_before = gm.get_anchor.shape[0]
-        gm.adjust_anchor(iteration=100)
+        # adjust_anchor mutates optimizer-registered leaf params in place;
+        # training always calls it under no_grad (train.py), so mirror that.
+        with torch.no_grad():
+            gm.adjust_anchor(iteration=100)
         n_after = gm.get_anchor.shape[0]
 
         # Planned prune = sum |delta| over surplus cells = (4-1) + (2-1) = 4.
