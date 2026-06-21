@@ -197,9 +197,10 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
                         b_ms = getattr(gaussians, '_last_b_render_ms', None)
                         if b_ms is not None:
                             step_ms = iter_start.elapsed_time(iter_end)
-                            pct = (b_ms / step_ms * 100) if step_ms > 0 else 0.0
+                            period = opt.b_refresh_period * opt.update_interval
+                            amort_pct = (b_ms / (period * step_ms) * 100) if (period > 0 and step_ms > 0) else 0.0
                             logger.info(f"[SOURCE_B] iteration={iteration} render_ms={b_ms:.1f} "
-                                        f"step_fwdbwd_ms={step_ms:.1f} pct_of_fwdbwd={pct:.1f}%")
+                                        f"step_fwdbwd_ms={step_ms:.1f} amortized_pct={amort_pct:.2f}%")
             elif iteration == opt.update_until:
                 if (getattr(opt, 'controller_enabled', False)
                         and gaussians.controller is not None):
