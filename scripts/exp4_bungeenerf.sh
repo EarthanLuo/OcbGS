@@ -47,7 +47,7 @@ for SCENE in $SCENES; do
     if [ ! -f "$BTOTAL_FILE" ]; then
         echo ""
         echo "--- Phase 1: Quick B_total (seed=0) ---"
-        python train.py \
+        python ocbgs/train.py \
             -s "$SRC" \
             -m "$DST/arm_a/seed_0" \
             --fork 2 --base_layer 10 --visible_threshold 0.0 \
@@ -80,7 +80,7 @@ for SCENE in $SCENES; do
     # Arm B — A-only
     for seed in "${SEEDS[@]}"; do
         echo "  arm_b seed=$seed"
-        python train.py \
+        python ocbgs/train.py \
             -s "$SRC" \
             -m "$DST/arm_b/seed_$seed" \
             --fork 2 --base_layer 10 --visible_threshold 0.0 \
@@ -97,7 +97,7 @@ for SCENE in $SCENES; do
     # Arm C — A+B (λ=1, M=10, K=16)
     for seed in "${SEEDS[@]}"; do
         echo "  arm_c seed=$seed"
-        python train.py \
+        python ocbgs/train.py \
             -s "$SRC" \
             -m "$DST/arm_c/seed_$seed" \
             --fork 2 --base_layer 10 --visible_threshold 0.0 \
