@@ -3,9 +3,11 @@
 #
 # Usage: bash scripts/exp4_bungeenerf.sh [amsterdam] [quebec] [rome] ...
 #
-# Phase 1: Quick B_total measurement (seed 0 only, Arm A)
-# Phase 2: A-only (Arm B) + A+B (Arm C, λ=1,M=10,K=16) × 5 seeds
+# Phase 1: Quick B_total measurement (seed 0 only, sequential)
+# Phase 2: A-only (Arm B) + A+B (Arm C, λ=1,M=10,K=16) × 5 seeds interleaved
 # Phase 3: Auto-compare A+B vs A-only vs σ → KEEP/DROP
+#
+# Concurrency: MAX_JOBS (default 3) limits simultaneous train.py processes.
 #
 # Output: /root/autodl-tmp/exp4/bungeenerf/<scene>/
 
@@ -17,6 +19,7 @@ ITERS=30000
 UPDATE_UNTIL=25000
 CHECKPOINTS=(7000 15000 25000 30000)
 SEEDS=(0 1 2 3 4)
+MAX_JOBS=${MAX_JOBS:-3}
 
 if [ $# -eq 0 ]; then
     SCENES="amsterdam quebec rome"
@@ -43,7 +46,7 @@ for SCENE in $SCENES; do
     echo "=== Scene: $SCENE ==="
     echo "=========================================="
 
-    # ── Phase 1: Quick B_total (seed 0 only) ──
+    # ── Phase 1: Quick B_total (seed 0 only, single job) ──
     if [ ! -f "$BTOTAL_FILE" ]; then
         echo ""
         echo "--- Phase 1: Quick B_total (seed=0) ---"
@@ -74,12 +77,17 @@ for SCENE in $SCENES; do
     B_TOTAL=$(cat "$BTOTAL_FILE")
     echo "B_total=$B_TOTAL"
 
-    # ── Phase 2: A-only (Arm B) + A+B (Arm C) × 5 seeds ──
+    # ── Phase 2: Arm B + Arm C interleaved, max $MAX_JOBS ──
     echo ""
-    echo "--- Phase 2: A-only + A+B × 5 seeds ---"
+    echo "--- Phase 2: A-only + A+B × 5 seeds (max_jobs=$MAX_JOBS) ---"
 
-    # Arm B — A-only
+    _running=0
     for seed in "${SEEDS[@]}"; do
+        # Arm B — A-only
+        while (( _running >= MAX_JOBS )); do
+            wait -n 2>/dev/null || true
+            (( _running-- )) || true
+        done
         echo "  arm_b seed=$seed"
         PORT=$((6009 + RANDOM % 1000))
         python ocbgs/train.py \
@@ -93,11 +101,14 @@ for SCENE in $SCENES; do
             --test_iterations "${CHECKPOINTS[@]}" $ITERS \
             --save_iterations $UPDATE_UNTIL $ITERS \
             --seed $seed --port $PORT --B_total $B_TOTAL &
-        sleep 30s
-    done
+        (( _running++ ))
+        sleep 10s
 
-    # Arm C — A+B (λ=1, M=10, K=16)
-    for seed in "${SEEDS[@]}"; do
+        # Arm C — A+B (λ=1, M=10, K=16)
+        while (( _running >= MAX_JOBS )); do
+            wait -n 2>/dev/null || true
+            (( _running-- )) || true
+        done
         echo "  arm_c seed=$seed"
         PORT=$((6009 + RANDOM % 1000))
         python ocbgs/train.py \
@@ -113,7 +124,8 @@ for SCENE in $SCENES; do
             --seed $seed --port $PORT --B_total $B_TOTAL \
             --b_enabled --fusion_lambda 1.0 \
             --b_camlist_size 16 --b_refresh_period 10 &
-        sleep 30s
+        (( _running++ ))
+        sleep 10s
     done
     wait
 

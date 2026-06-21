@@ -5,6 +5,8 @@
 # Phase 2: Arm B (A-only controller) + Arm C (A+B, λ=1,M=10,K=4) × 5 seeds
 # Phase 3: Auto-compare A+B vs A-only vs σ
 #
+# Concurrency: MAX_JOBS (default 3) limits simultaneous train.py processes.
+#
 # Output: /root/autodl-tmp/exp4/garden/
 
 set -e
@@ -16,6 +18,7 @@ ITERS=30000
 UPDATE_UNTIL=25000
 CHECKPOINTS=(7000 15000 25000 30000)
 SEEDS=(0 1 2 3 4)
+MAX_JOBS=${MAX_JOBS:-3}
 
 mkdir -p "$DST"
 
@@ -23,11 +26,16 @@ echo "=== Exp 4 Garden ==="
 echo "Source: $SRC"
 echo "Output: $DST"
 
-# ── Phase 1: Arm A — B_total measurement ──
+# ── Phase 1: Arm A — B_total measurement (5 seeds, max $MAX_JOBS parallel) ──
 if [ ! -f "$BTOTAL_FILE" ]; then
     echo ""
     echo "=== Phase 1: Arm A (Octree-GS native → B_total) ==="
+    _running=0
     for seed in "${SEEDS[@]}"; do
+        while (( _running >= MAX_JOBS )); do
+            wait -n 2>/dev/null || true
+            (( _running-- )) || true
+        done
         echo "  seed=$seed"
         PORT=$((6009 + RANDOM % 1000))
         python ocbgs/train.py \
@@ -39,9 +47,11 @@ if [ ! -f "$BTOTAL_FILE" ]; then
             --test_iterations $UPDATE_UNTIL $ITERS \
             --save_iterations $UPDATE_UNTIL $ITERS \
             --seed $seed --port $PORT --no_controller &
-        sleep 30s
+        (( _running++ ))
+        sleep 10s
     done
     wait
+
     echo ""
     echo "=== Phase 1 complete — extracting B_total ==="
     python scripts/collect_results.py total_points \
@@ -59,13 +69,18 @@ fi
 
 B_TOTAL=$(cat "$BTOTAL_FILE")
 
-# ── Phase 2: Arm B (A-only σ) + Arm C (A+B no-harm) in parallel ──
+# ── Phase 2: Arm B (A-only) + Arm C (A+B) interleaved, max $MAX_JOBS ──
 echo ""
 echo "=== Phase 2: Arm B (A-only) + Arm C (A+B, λ=1, M=10, K=4) ==="
-echo "B_total=$B_TOTAL"
+echo "B_total=$B_TOTAL   max_jobs=$MAX_JOBS"
 
-# Arm B
+_running=0
 for seed in "${SEEDS[@]}"; do
+    # Arm B — A-only
+    while (( _running >= MAX_JOBS )); do
+        wait -n 2>/dev/null || true
+        (( _running-- )) || true
+    done
     echo "  arm_b seed=$seed"
     PORT=$((6009 + RANDOM % 1000))
     python ocbgs/train.py \
@@ -77,11 +92,14 @@ for seed in "${SEEDS[@]}"; do
         --test_iterations "${CHECKPOINTS[@]}" $ITERS \
         --save_iterations $UPDATE_UNTIL $ITERS \
         --seed $seed --port $PORT --B_total $B_TOTAL &
-    sleep 30s
-done
+    (( _running++ ))
+    sleep 10s
 
-# Arm C
-for seed in "${SEEDS[@]}"; do
+    # Arm C — A+B
+    while (( _running >= MAX_JOBS )); do
+        wait -n 2>/dev/null || true
+        (( _running-- )) || true
+    done
     echo "  arm_c seed=$seed"
     PORT=$((6009 + RANDOM % 1000))
     python ocbgs/train.py \
@@ -95,7 +113,8 @@ for seed in "${SEEDS[@]}"; do
         --seed $seed --port $PORT --B_total $B_TOTAL \
         --b_enabled --fusion_lambda 1.0 \
         --b_camlist_size 4 --b_refresh_period 10 &
-    sleep 30s
+    (( _running++ ))
+    sleep 10s
 done
 wait
 
