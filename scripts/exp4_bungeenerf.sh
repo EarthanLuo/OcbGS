@@ -47,6 +47,7 @@ for SCENE in $SCENES; do
     if [ ! -f "$BTOTAL_FILE" ]; then
         echo ""
         echo "--- Phase 1: Quick B_total (seed=0) ---"
+        PORT=$((6009 + RANDOM % 1000))
         python ocbgs/train.py \
             -s "$SRC" \
             -m "$DST/arm_a/seed_0" \
@@ -57,7 +58,7 @@ for SCENE in $SCENES; do
             --iterations $ITERS --update_until $UPDATE_UNTIL \
             --test_iterations $UPDATE_UNTIL $ITERS \
             --save_iterations $UPDATE_UNTIL $ITERS \
-            --seed 0 --no_controller
+            --seed 0 --port $PORT --no_controller
 
         python scripts/collect_results.py total_points \
             --glob "$DST/arm_a/seed_0" \
@@ -80,6 +81,7 @@ for SCENE in $SCENES; do
     # Arm B — A-only
     for seed in "${SEEDS[@]}"; do
         echo "  arm_b seed=$seed"
+        PORT=$((6009 + RANDOM % 1000))
         python ocbgs/train.py \
             -s "$SRC" \
             -m "$DST/arm_b/seed_$seed" \
@@ -90,13 +92,14 @@ for SCENE in $SCENES; do
             --iterations $ITERS --update_until $UPDATE_UNTIL \
             --test_iterations "${CHECKPOINTS[@]}" $ITERS \
             --save_iterations $UPDATE_UNTIL $ITERS \
-            --seed $seed --B_total $B_TOTAL &
+            --seed $seed --port $PORT --B_total $B_TOTAL &
         sleep 30s
     done
 
     # Arm C — A+B (λ=1, M=10, K=16)
     for seed in "${SEEDS[@]}"; do
         echo "  arm_c seed=$seed"
+        PORT=$((6009 + RANDOM % 1000))
         python ocbgs/train.py \
             -s "$SRC" \
             -m "$DST/arm_c/seed_$seed" \
@@ -107,7 +110,7 @@ for SCENE in $SCENES; do
             --iterations $ITERS --update_until $UPDATE_UNTIL \
             --test_iterations "${CHECKPOINTS[@]}" $ITERS \
             --save_iterations $UPDATE_UNTIL $ITERS \
-            --seed $seed --B_total $B_TOTAL \
+            --seed $seed --port $PORT --B_total $B_TOTAL \
             --b_enabled --fusion_lambda 1.0 \
             --b_camlist_size 16 --b_refresh_period 10 &
         sleep 30s

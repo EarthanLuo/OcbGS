@@ -29,6 +29,7 @@ if [ ! -f "$BTOTAL_FILE" ]; then
     echo "=== Phase 1: Arm A (Octree-GS native → B_total) ==="
     for seed in "${SEEDS[@]}"; do
         echo "  seed=$seed"
+        PORT=$((6009 + RANDOM % 1000))
         python ocbgs/train.py \
             -s "$SRC" --ds 8 \
             -m "$DST/arm_a/seed_$seed" \
@@ -37,7 +38,7 @@ if [ ! -f "$BTOTAL_FILE" ]; then
             --iterations $ITERS --update_until $UPDATE_UNTIL \
             --test_iterations $UPDATE_UNTIL $ITERS \
             --save_iterations $UPDATE_UNTIL $ITERS \
-            --seed $seed --no_controller &
+            --seed $seed --port $PORT --no_controller &
         sleep 30s
     done
     wait
@@ -66,6 +67,7 @@ echo "B_total=$B_TOTAL"
 # Arm B
 for seed in "${SEEDS[@]}"; do
     echo "  arm_b seed=$seed"
+    PORT=$((6009 + RANDOM % 1000))
     python ocbgs/train.py \
         -s "$SRC" --ds 8 \
         -m "$DST/arm_b/seed_$seed" \
@@ -74,13 +76,14 @@ for seed in "${SEEDS[@]}"; do
         --iterations $ITERS --update_until $UPDATE_UNTIL \
         --test_iterations "${CHECKPOINTS[@]}" $ITERS \
         --save_iterations $UPDATE_UNTIL $ITERS \
-        --seed $seed --B_total $B_TOTAL &
+        --seed $seed --port $PORT --B_total $B_TOTAL &
     sleep 30s
 done
 
 # Arm C
 for seed in "${SEEDS[@]}"; do
     echo "  arm_c seed=$seed"
+    PORT=$((6009 + RANDOM % 1000))
     python ocbgs/train.py \
         -s "$SRC" --ds 8 \
         -m "$DST/arm_c/seed_$seed" \
@@ -89,7 +92,7 @@ for seed in "${SEEDS[@]}"; do
         --iterations $ITERS --update_until $UPDATE_UNTIL \
         --test_iterations "${CHECKPOINTS[@]}" $ITERS \
         --save_iterations $UPDATE_UNTIL $ITERS \
-        --seed $seed --B_total $B_TOTAL \
+        --seed $seed --port $PORT --B_total $B_TOTAL \
         --b_enabled --fusion_lambda 1.0 \
         --b_camlist_size 4 --b_refresh_period 10 &
     sleep 30s
