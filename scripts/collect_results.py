@@ -65,9 +65,9 @@ def _read_total_points_at_step(events_dir, tag, step):
     ea.Reload()
     scalars = ea.Scalars(tag)
     values = []
-    for wall_time, s, value in scalars:
-        if step is None or s == step:
-            values.append(value)
+    for event in scalars:
+        if step is None or event.step == step:
+            values.append(event.value)
     if not values:
         return None
     # If step specified, return the exact match; otherwise latest
