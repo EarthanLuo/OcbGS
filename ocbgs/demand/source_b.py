@@ -13,14 +13,15 @@ def evaluate_source_b(model, train_cameras, pipe, bg, demand_b, partition, cfg, 
     t0 = time.perf_counter()
     N = model.get_anchor.shape[0]
     model.photometric_error_accum = torch.zeros(N, device=model.get_anchor.device)
-    for cam in camlist:
-        pkg = render_fn(cam, model, pipe, bg)
-        err_map = (pkg["render"] - cam.original_image).abs().mean(0)
-        err_delta, _ = PhotometricDemand.accumulate_view(
-            err_map, pkg["xyz"], pkg["radii"], pkg["neural_opacity"],
-            pkg["selection_mask"], cam.full_proj_transform,
-            model.n_offsets, torch.arange(N), N)
-        model.photometric_error_accum += err_delta
+    with torch.no_grad():
+        for cam in camlist:
+            pkg = render_fn(cam, model, pipe, bg)
+            err_map = (pkg["render"] - cam.original_image.to(pkg["render"].device)).abs().mean(0)
+            err_delta, _ = PhotometricDemand.accumulate_view(
+                err_map, pkg["xyz"], pkg["radii"], pkg["neural_opacity"],
+                pkg["selection_mask"], cam.full_proj_transform,
+                model.n_offsets, torch.arange(N), N)
+            model.photometric_error_accum += err_delta
     render_ms = (time.perf_counter() - t0) * 1000.0
     s_b = demand_b.produce(scene=None, stats={KEY_PHOTOMETRIC_ERROR_ACCUM: model.photometric_error_accum})
     cell_ids, d_v = partition.reduce(model.get_anchor, s_b)

@@ -226,6 +226,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
                 "selection_mask": mask,
                 "neural_opacity": neural_opacity,
                 "scaling": scaling,
+                "xyz": xyz,
                 }
     else:
         return {"render": rendered_image,
