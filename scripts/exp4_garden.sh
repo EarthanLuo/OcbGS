@@ -6,6 +6,8 @@
 # Phase 3: Auto-compare A+B vs A-only vs σ
 #
 # Concurrency: MAX_JOBS (default 3) limits simultaneous train.py processes.
+# Resume: a per-seed run is skipped when its results.json already exists, so
+#         re-running the script never repeats completed work.
 #
 # Output: /root/autodl-tmp/exp4/garden/
 
@@ -34,6 +36,10 @@ if [ ! -f "$BTOTAL_FILE" ]; then
     echo "=== Phase 1: Arm A (Octree-GS native → B_total) ==="
     _running=0
     for seed in "${SEEDS[@]}"; do
+        if [ -f "$DST/arm_a/seed_$seed/results.json" ]; then
+            echo "  seed=$seed — DONE (skip)"
+            continue
+        fi
         while (( _running >= MAX_JOBS )); do
             wait -n 2>/dev/null || true
             (( _running-- )) || true
@@ -49,7 +55,7 @@ if [ ! -f "$BTOTAL_FILE" ]; then
             --test_iterations $UPDATE_UNTIL $ITERS \
             --save_iterations $UPDATE_UNTIL $ITERS \
             --seed $seed --port $PORT --no_controller &
-        (( _running++ ))
+        (( _running++ )) || true
         sleep 10s
     done
     wait
@@ -79,44 +85,52 @@ echo "B_total=$B_TOTAL   max_jobs=$MAX_JOBS"
 _running=0
 for seed in "${SEEDS[@]}"; do
     # Arm B — A-only
-    while (( _running >= MAX_JOBS )); do
-        wait -n 2>/dev/null || true
-        (( _running-- )) || true
-    done
-    echo "  arm_b seed=$seed"
-    PORT=$((6009 + RANDOM % 1000))
-    python ocbgs/train.py \
-        -s "$SRC" --ds 8 \
-        -m "$DST/arm_b/seed_$seed" \
-        --fork 2 --base_layer 10 --visible_threshold 0.0 \
-        --dist2level round --update_ratio 0.2 \
-        --iterations $ITERS --update_until $UPDATE_UNTIL \
-        --test_iterations "${CHECKPOINTS[@]}" $ITERS \
-        --save_iterations $UPDATE_UNTIL $ITERS \
-        --seed $seed --port $PORT --B_total $B_TOTAL &
-    (( _running++ ))
-    sleep 10s
+    if [ ! -f "$DST/arm_b/seed_$seed/results.json" ]; then
+        while (( _running >= MAX_JOBS )); do
+            wait -n 2>/dev/null || true
+            (( _running-- )) || true
+        done
+        echo "  arm_b seed=$seed"
+        PORT=$((6009 + RANDOM % 1000))
+        python ocbgs/train.py \
+            -s "$SRC" --ds 8 \
+            -m "$DST/arm_b/seed_$seed" \
+            --fork 2 --base_layer 10 --visible_threshold 0.0 \
+            --dist2level round --update_ratio 0.2 \
+            --iterations $ITERS --update_until $UPDATE_UNTIL \
+            --test_iterations "${CHECKPOINTS[@]}" $ITERS \
+            --save_iterations $UPDATE_UNTIL $ITERS \
+            --seed $seed --port $PORT --B_total $B_TOTAL &
+        (( _running++ )) || true
+        sleep 10s
+    else
+        echo "  arm_b seed=$seed — DONE (skip)"
+    fi
 
     # Arm C — A+B
-    while (( _running >= MAX_JOBS )); do
-        wait -n 2>/dev/null || true
-        (( _running-- )) || true
-    done
-    echo "  arm_c seed=$seed"
-    PORT=$((6009 + RANDOM % 1000))
-    python ocbgs/train.py \
-        -s "$SRC" --ds 8 \
-        -m "$DST/arm_c/seed_$seed" \
-        --fork 2 --base_layer 10 --visible_threshold 0.0 \
-        --dist2level round --update_ratio 0.2 \
-        --iterations $ITERS --update_until $UPDATE_UNTIL \
-        --test_iterations "${CHECKPOINTS[@]}" $ITERS \
-        --save_iterations $UPDATE_UNTIL $ITERS \
-        --seed $seed --port $PORT --B_total $B_TOTAL \
-        --b_enabled --fusion_lambda 1.0 \
-        --b_camlist_size 4 --b_refresh_period 10 &
-    (( _running++ ))
-    sleep 10s
+    if [ ! -f "$DST/arm_c/seed_$seed/results.json" ]; then
+        while (( _running >= MAX_JOBS )); do
+            wait -n 2>/dev/null || true
+            (( _running-- )) || true
+        done
+        echo "  arm_c seed=$seed"
+        PORT=$((6009 + RANDOM % 1000))
+        python ocbgs/train.py \
+            -s "$SRC" --ds 8 \
+            -m "$DST/arm_c/seed_$seed" \
+            --fork 2 --base_layer 10 --visible_threshold 0.0 \
+            --dist2level round --update_ratio 0.2 \
+            --iterations $ITERS --update_until $UPDATE_UNTIL \
+            --test_iterations "${CHECKPOINTS[@]}" $ITERS \
+            --save_iterations $UPDATE_UNTIL $ITERS \
+            --seed $seed --port $PORT --B_total $B_TOTAL \
+            --b_enabled --fusion_lambda 1.0 \
+            --b_camlist_size 4 --b_refresh_period 10 &
+        (( _running++ )) || true
+        sleep 10s
+    else
+        echo "  arm_c seed=$seed — DONE (skip)"
+    fi
 done
 wait
 
