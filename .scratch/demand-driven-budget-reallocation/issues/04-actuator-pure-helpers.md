@@ -1,6 +1,6 @@
 # Issue: Actuator pure helpers — `_opacity_dead_mask` + `_lowest_sa_in_surplus`
 
-**Status:** ready-for-agent  <!-- helpers implemented in gaussian_model.py, 16 tests written in test_04_actuator_pure_helpers.py; all tests require CUDA server to execute (see note under Acceptance criteria) -->
+**Status:** DONE
 
 ## What to build
 
@@ -35,16 +35,16 @@ In each surplus Control Cell (`δ(v) < 0`), selects the `|δ(v)|` anchors with t
 
 ## Acceptance criteria
 
-- [ ] `_opacity_dead_mask`: all anchors with `opacity_accum < min_opacity` → True; all above → False
-- [ ] `_opacity_dead_mask`: zero anchors → returns empty (all-False) mask, no crash
-- [ ] `_opacity_dead_mask`: all-dead → returns all-True mask
-- [ ] `_lowest_sa_in_surplus`: single surplus Control Cell with `|δ| = 3` and 5 anchors → selects the 3 anchors with lowest `s(a)` (given correct `anchor_cell_ids` assigning all 5 to that Control Cell)
-- [ ] `_lowest_sa_in_surplus`: multiple surplus Control Cells — each Control Cell independently selects its `|δ(v)|` lowest-`s(a)` anchors (verified with distinct `anchor_cell_ids`) 
-- [ ] `_lowest_sa_in_surplus`: deficit Control Cell (δ > 0) → no anchors selected (always False)
-- [ ] `_lowest_sa_in_surplus`: surplus Control Cell with `|δ| > n(v)` (plan asks to prune more than exist) → selects all anchors in that Control Cell (graceful, no crash)
-- [ ] `_lowest_sa_in_surplus`: `|δ| = 0` → no anchors selected, empty mask
-- [ ] Both functions are pure PyTorch (no optimizer access, no CUDA); unit-testable with synthetic tensors
-- [ ] Neither function mutates any anchor state or optimizer state
+- [x] `_opacity_dead_mask`: all anchors with `opacity_accum < min_opacity` → True; all above → False
+- [x] `_opacity_dead_mask`: zero anchors → returns empty (all-False) mask, no crash
+- [x] `_opacity_dead_mask`: all-dead → returns all-True mask
+- [x] `_lowest_sa_in_surplus`: single surplus Control Cell with `|δ| = 3` and 5 anchors → selects the 3 anchors with lowest `s(a)` (given correct `anchor_cell_ids` assigning all 5 to that Control Cell)
+- [x] `_lowest_sa_in_surplus`: multiple surplus Control Cells — each Control Cell independently selects its `|δ(v)|` lowest-`s(a)` anchors (verified with distinct `anchor_cell_ids`) 
+- [x] `_lowest_sa_in_surplus`: deficit Control Cell (δ > 0) → no anchors selected (always False)
+- [x] `_lowest_sa_in_surplus`: surplus Control Cell with `|δ| > n(v)` (plan asks to prune more than exist) → selects all anchors in that Control Cell (graceful, no crash)
+- [x] `_lowest_sa_in_surplus`: `|δ| = 0` → no anchors selected, empty mask
+- [x] Both functions are pure PyTorch (no optimizer access, no CUDA); unit-testable with synthetic tensors
+- [x] Neither function mutates any anchor state or optimizer state
 
 **Note on local testability:** The two helper functions themselves are pure `@staticmethod` PyTorch (no CUDA, no optimizer access). However, they live in `gaussian_model.py` which has module-level imports of `torch_scatter`, `simple_knn._C`, `plyfile`, `einops`, and `scene.embedding` → `scene.dataset_readers` → `PIL` — a deep import chain that requires CUDA and several packages not available on Windows. As a result, the 16 unit tests are skipped on Windows (`pytest.skip` on `ImportError`) and must be verified on the CUDA server. See `ocbgs/tests/README.md` for server test procedure.
 
