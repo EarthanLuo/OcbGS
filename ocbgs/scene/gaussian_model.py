@@ -1300,8 +1300,7 @@ class GaussianModel:
             self, self._b_train_cameras, self._b_pipe, self._b_bg,
             self.demand_b, self.partition, self._b_cfg)
         d_b = align_demand_b(cids, d_b_cache) if d_b_cache is not None else None
-        if render_ms is not None:
-            self._last_b_render_ms = render_ms
+        self._last_b_render_ms = render_ms
 
         plan = self.controller.plan(cell_ids=cids, d_A=d_a, occupancy=n,
                                      B_total=self.B_total, d_B=d_b)
