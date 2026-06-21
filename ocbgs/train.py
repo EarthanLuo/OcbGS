@@ -88,6 +88,7 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
     )
     scene = Scene(dataset, gaussians, ply_path=ply_path, shuffle=False, logger=logger, resolution_scales=dataset.resolution_scales)
     gaussians.training_setup(opt)
+    gaussians.setup_source_b(scene, pipe, opt)
     gaussians.set_coarse_interval(opt.coarse_iter, opt.coarse_factor)
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
@@ -192,6 +193,10 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
                         extra_up=dataset.extra_up,
                         min_opacity=opt.min_opacity
                     )
+                    if getattr(opt, 'b_enabled', False):
+                        b_ms = getattr(gaussians, '_last_b_render_ms', None)
+                        if b_ms is not None:
+                            logger.info(f"[SOURCE_B] iteration={iteration} render_ms={b_ms:.1f}")
             elif iteration == opt.update_until:
                 if (getattr(opt, 'controller_enabled', False)
                         and gaussians.controller is not None):

@@ -165,6 +165,11 @@ class OptimizationParams(ParamGroup):
 
         self.controller_enabled = True
 
+        self.b_enabled = False
+        self.b_camlist_size = 16
+        self.b_refresh_period = 100
+        self.fusion_lambda = 0.0
+
         super().__init__(parser, "Optimization Parameters")
         parser.add_argument("--no_controller", dest="controller_enabled", action="store_false",
                             help="Disable demand-driven budget reallocation controller")

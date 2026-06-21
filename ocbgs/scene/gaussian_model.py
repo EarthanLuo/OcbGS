@@ -27,8 +27,10 @@ from scene.embedding import Embedding
 from einops import repeat
 import math
 from demand import ErrorVisibilityDemand, KEY_ANCHOR_DEMON, KEY_OFFSET_GRADIENT_ACCUM, KEY_OFFSET_DENOM
+from demand.source_b import evaluate_source_b
+from demand import PhotometricDemand
 from partition import OctreePartition
-from controller import TemporalBudgetController
+from controller import TemporalBudgetController, align_demand_b
     
 class GaussianModel:
 
@@ -494,6 +496,18 @@ class GaussianModel:
                                                         lr_final=training_args.appearance_lr_final,
                                                         lr_delay_mult=training_args.appearance_lr_delay_mult,
                                                         max_steps=training_args.appearance_lr_max_steps)
+
+    def setup_source_b(self, scene, pipe, b_cfg):
+        self._b_train_cameras = scene.getTrainCameras()
+        self._b_pipe = pipe
+        self._b_bg = torch.zeros(3, device="cuda")
+        self._b_cfg = b_cfg
+        self._b_step = 0
+        self._b_cache = None
+        self._last_b_render_ms = None
+        self.photometric_error_accum = torch.zeros(self.get_anchor.shape[0], device="cuda")
+        self.demand_b = PhotometricDemand() if getattr(b_cfg, 'b_enabled', False) else None
+        self.controller.fusion_lambda = b_cfg.fusion_lambda
 
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
@@ -1281,8 +1295,16 @@ class GaussianModel:
         cids, n = self.partition.reduce(positions, ones, exclude=GC_mask)
         cids, d_a = self.partition.reduce(positions, s_a, exclude=GC_mask)
 
+        self._b_step += 1
+        d_b_cache, render_ms = evaluate_source_b(
+            self, self._b_train_cameras, self._b_pipe, self._b_bg,
+            self.demand_b, self.partition, self._b_cfg)
+        d_b = align_demand_b(cids, d_b_cache) if d_b_cache is not None else None
+        if render_ms is not None:
+            self._last_b_render_ms = render_ms
+
         plan = self.controller.plan(cell_ids=cids, d_A=d_a, occupancy=n,
-                                     B_total=self.B_total)
+                                     B_total=self.B_total, d_B=d_b)
 
         anchor_cell_ids = self.partition.cell_id(positions)
 

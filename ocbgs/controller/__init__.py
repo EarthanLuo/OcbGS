@@ -264,12 +264,13 @@ class TemporalBudgetController(StaticBudgetController):
     """
 
     def __init__(self, floor=1, k_cap=8, theta_frac=0.25, rate_limit=0.05,
-                 tau_smooth=3, k=3, spearman_threshold=0.9):
+                 tau_smooth=3, k=3, spearman_threshold=0.9, fusion_lambda=0.0):
         super().__init__(floor=floor, k_cap=k_cap, theta_frac=theta_frac,
                          rate_limit=rate_limit)
         self.tau_smooth = tau_smooth
         self.k = k
         self.spearman_threshold = spearman_threshold
+        self.fusion_lambda = fusion_lambda
         self._reset_state()
 
     def _reset_state(self):
@@ -302,19 +303,25 @@ class TemporalBudgetController(StaticBudgetController):
         if C == 0:
             return self._allocate(cell_ids, d_A, occupancy, B_total, phase=self._phase)
 
+        if d_B is not None:
+            d_A_sum = d_A.sum()
+            d_B_sum = d_B.sum()
+            d_A_norm = d_A / d_A_sum if d_A_sum > 0 else d_A
+            d_B_norm = d_B / d_B_sum if d_B_sum > 0 else d_B
+            d_raw = d_A_norm + self.fusion_lambda * d_B_norm
+            print(f"[FUSION] d_B non-null | d_A_norm_sum={d_A_norm.sum().item():.3f} "
+                  f"d_B_norm_sum={d_B_norm.sum().item():.3f} lambda={self.fusion_lambda:.2f} "
+                  f"d_raw_range=[{d_raw.min().item():.3f},{d_raw.max().item():.3f}]")
+        else:
+            d_raw = d_A
+
         beta = 1.0 - 1.0 / self.tau_smooth
         d_smooth = torch.empty(C, dtype=torch.float32, device=device)
 
         for i in range(C):
             cid_int = cell_ids[i].item()
-            prev = self._d_smooth_prev.get(cid_int, float(d_A[i].item()))
-            d_smooth[i] = beta * prev + (1.0 - beta) * float(d_A[i].item())
-
-        # NOTE — normalize insertion point for issue 06 (A+B fusion):
-        # When d_B is not None, normalise d_A and d_B independently (L1)
-        # BEFORE the EMA step above, then feed the fused value through EMA:
-        #   d_fused(v) = normalize(d_A(v)) + lambda * normalize(d_B(v))
-        # Currently d_B=None → raw d_A flows through directly.
+            prev = self._d_smooth_prev.get(cid_int, float(d_raw[i].item()))
+            d_smooth[i] = beta * prev + (1.0 - beta) * float(d_raw[i].item())
 
         N_total = occupancy.sum().item()
         stable = self._spearman_stable(cell_ids, d_smooth)
@@ -388,3 +395,9 @@ class TemporalBudgetController(StaticBudgetController):
         if r != r:
             return False
         return r >= self.spearman_threshold
+
+
+def align_demand_b(cell_ids, b_cache):
+    return torch.tensor([b_cache.get(int(c), 0.0) for c in cell_ids.tolist()],
+                        dtype=torch.float32,
+                        device=cell_ids.device)

@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import torch
+import torch.nn.functional as F
 
 # Mapping keys for the stats dict passed to DemandProducer.produce().
 # Issue 05 (adjust_anchor integration) feeds these exact names into the
@@ -8,6 +9,7 @@ import torch
 KEY_ANCHOR_DEMON = "anchor_demon"
 KEY_OFFSET_GRADIENT_ACCUM = "offset_gradient_accum"
 KEY_OFFSET_DENOM = "offset_denom"
+KEY_PHOTOMETRIC_ERROR_ACCUM = "photometric_error_accum"
 
 
 class DemandProducer(ABC):
@@ -86,3 +88,52 @@ class StubDemandProducer(DemandProducer):
             anchor = torch.empty(0)
         N = anchor.shape[0]
         return torch.ones(N, device=anchor.device) if N > 0 else anchor.new_zeros(0)
+
+
+class PhotometricDemand(DemandProducer):
+
+    def __init__(self):
+        pass
+
+    def produce(self, scene, stats):
+        return stats[KEY_PHOTOMETRIC_ERROR_ACCUM]
+
+    @staticmethod
+    def _project_to_ndc(xyz, proj_matrix):
+        xyz_hom = torch.cat([xyz, torch.ones_like(xyz[:, :1])], dim=1)
+        clip = xyz_hom @ proj_matrix
+        w = clip[:, 3]
+        w_safe = torch.where(w > 0, w, torch.ones_like(w))
+        ndc = clip[:, :2] / w_safe.unsqueeze(-1)
+        return ndc, w
+
+    @staticmethod
+    def accumulate_view(error_map, xyz, radii, neural_opacity, mask,
+                        proj_matrix, n_offsets, visible_anchor_global_idx,
+                        N_anchors):
+        device = error_map.device
+        err_delta = torch.zeros(N_anchors, device=device)
+        cnt_delta = torch.zeros(N_anchors, device=device)
+        P = xyz.shape[0]
+        if P == 0:
+            return err_delta, cnt_delta
+
+        opacity_masked = neural_opacity[mask].squeeze(-1)
+
+        ndc, w = PhotometricDemand._project_to_ndc(xyz, proj_matrix)
+        onscreen = (w > 0).float()
+
+        H, W = error_map.shape[-2], error_map.shape[-1]
+        sampled = F.grid_sample(error_map.view(1, 1, H, W),
+                                ndc.view(1, P, 1, 2),
+                                align_corners=False,
+                                padding_mode='zeros').view(P)
+
+        visibility = (radii > 0).float()
+        contrib = sampled * radii.float() * opacity_masked * visibility * onscreen
+
+        f_indices = mask.nonzero(as_tuple=True)[0]
+        global_anchor = visible_anchor_global_idx[f_indices // n_offsets]
+        err_delta.scatter_add_(0, global_anchor, contrib)
+        cnt_delta.scatter_add_(0, global_anchor, visibility * onscreen)
+        return err_delta, cnt_delta
