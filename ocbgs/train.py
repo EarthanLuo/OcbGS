@@ -199,6 +199,9 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
                         logger.info(f"[CONTROLLER] Phase 2 REACHED by update_until={opt.update_until}")
                     else:
                         logger.info(f"[CONTROLLER] Phase 2 NOT reached by update_until={opt.update_until}")
+                    n_anchors = gaussians.get_anchor.shape[0]
+                    logger.info(f"[CONTROLLER] final anchors={n_anchors} <= B_total={gaussians.B_total}: "
+                                f"{n_anchors <= gaussians.B_total}")
                 del gaussians.opacity_accum
                 del gaussians.offset_gradient_accum
                 del gaussians.offset_denom

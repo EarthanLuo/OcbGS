@@ -334,3 +334,132 @@ class TestSetControlLevelOneShot:
         p.set_control_level(positions)
         with pytest.raises(RuntimeError, match="already set"):
             p.set_control_level(positions)
+
+
+# ---------------------------------------------------------------------------
+# steady-phase demand-prune integration (server-only — runs adjust_anchor on
+# real anchor state with the controller forced into steady phase)
+# ---------------------------------------------------------------------------
+
+class _StubProducer:
+    """DemandProducer that returns a fixed s_a (lets the test craft the
+    per-anchor demand ranking that drives prune-by-s(a))."""
+
+    def __init__(self, s_a):
+        self._s_a = s_a
+
+    def produce(self, scene, stats):
+        return self._s_a
+
+
+class _SteadyStubController:
+    """Controller forced into steady phase with a surplus plan: target one
+    anchor per cell, so delta = 1 - occupancy (< 0 wherever a cell holds more
+    than one anchor). Isolates the actuator's demand-prune execution from the
+    controller's water-fill (which is unit-tested separately)."""
+
+    def plan(self, cell_ids, d_A, occupancy, B_total, d_B=None):
+        c_target = torch.ones_like(occupancy)
+        delta = c_target - occupancy
+        return ReallocationPlan(cell_ids=cell_ids, delta=delta,
+                                phase="steady", c_target=c_target)
+
+    def reset(self):
+        pass
+
+    @property
+    def reached_phase2(self):
+        return True
+
+
+class TestSteadyDemandPruneIntegration:
+    """End-to-end adjust_anchor in steady phase: demand-prune executes,
+    executed <= planned, total <= B_total.
+
+    Grow is suppressed (offset_gradient_accum = 0 -> no candidates -> weed_out
+    never runs, so no camera setup is needed); this isolates the prune path
+    that the ramp-only training smoke never exercises.
+    """
+
+    def test_demand_prune_executes_and_respects_budget(self):
+        _requires_gm()
+        gm = GaussianModel(B_total=1000)
+        gm.voxel_size = 1.0
+        gm.fork = 2
+        gm.levels = 2
+        gm.n_offsets = 5
+        gm.feat_dim = 32
+        gm.progressive = False
+        gm.coarse_intervals = []
+        gm.init_pos = torch.tensor([0.0, 0.0, 0.0], device='cuda')
+
+        # 4 anchors in cell A (origin), 2 in cell B (far away) -> 2 control cells.
+        positions = torch.tensor([
+            [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0],
+            [100.0, 100.0, 100.0], [100.0, 100.0, 100.0],
+        ], device='cuda')
+        N = positions.shape[0]
+        k = gm.n_offsets
+
+        gm._anchor = positions.clone()
+        gm._level = torch.zeros(N, 1, device='cuda')
+        gm._offset = torch.zeros(N, k, 3, device='cuda')
+        gm._scaling = torch.ones(N, 6, device='cuda')
+        gm._rotation = torch.zeros(N, 4, device='cuda')
+        gm._rotation[:, 0] = 1.0
+        gm._anchor_feat = torch.zeros(N, gm.feat_dim, device='cuda')
+        gm._opacity = torch.zeros(N, 1, device='cuda')
+        gm._extra_level = torch.zeros(N, device='cuda')
+
+        # Healthy opacity -> GC mask all False (mean opacity 1.0 >> min_opacity).
+        gm.opacity_accum = torch.ones(N, 1, device='cuda')
+        gm.anchor_demon = torch.ones(N, 1, device='cuda')
+        # Zero gradients -> no grow candidates -> weed_out skipped entirely.
+        gm.offset_denom = torch.ones(N * k, 1, device='cuda')
+        gm.offset_gradient_accum = torch.zeros(N * k, 1, device='cuda')
+
+        gm.optimizer = torch.optim.Adam([
+            {'params': [gm._anchor], 'lr': 0.0, 'name': 'anchor'},
+            {'params': [gm._offset], 'lr': 0.0, 'name': 'offset'},
+            {'params': [gm._anchor_feat], 'lr': 0.0, 'name': 'anchor_feat'},
+            {'params': [gm._opacity], 'lr': 0.0, 'name': 'opacity'},
+            {'params': [gm._scaling], 'lr': 0.0, 'name': 'scaling'},
+            {'params': [gm._rotation], 'lr': 0.0, 'name': 'rotation'},
+        ], lr=0.0)
+
+        gm.partition = OctreePartition(
+            B_total=gm.B_total, floor=1, rho_min=1, A_min=1,
+            voxel_size=gm.voxel_size, fork=gm.fork, levels=gm.levels,
+            init_pos=gm.init_pos,
+        )
+        gm.partition.set_control_level(gm._anchor)
+        gm._control_level_set = True
+
+        # Distinct s_a within each cell -> deterministic lowest-s(a) pruning.
+        # Cell A (idx 0-3): [1,2,3,4] keep 4.  Cell B (idx 4-5): [5,6] keep 6.
+        s_a = torch.tensor([1., 2., 3., 4., 5., 6.], device='cuda')
+        gm.demand_producer = _StubProducer(s_a)
+        gm.controller = _SteadyStubController()
+
+        gm._controller_enabled = True
+        gm._controller_update_from = 0
+        gm._controller_update_until = 10_000
+
+        assert torch.unique(gm.partition.cell_id(gm._anchor)).numel() == 2, \
+            "fixture must form exactly 2 control cells"
+
+        n_before = gm.get_anchor.shape[0]
+        gm.adjust_anchor(iteration=100)
+        n_after = gm.get_anchor.shape[0]
+
+        # Planned prune = sum |delta| over surplus cells = (4-1) + (2-1) = 4.
+        planned_prune = (4 - 1) + (2 - 1)
+        executed_prune = n_before - n_after
+
+        assert executed_prune <= planned_prune, (
+            f"executed prune {executed_prune} exceeds planned {planned_prune}")
+        assert n_after <= gm.B_total, f"total {n_after} > B_total {gm.B_total}"
+        # Demand-prune fired: each cell collapses to its c_target = 1.
+        assert n_after == 2, f"expected 2 survivors (1 per cell), got {n_after}"
+        assert torch.unique(gm.partition.cell_id(gm.get_anchor)).numel() == 2, \
+            "expected exactly one survivor per cell"
