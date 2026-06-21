@@ -209,56 +209,6 @@ class TestReallocationPlan:
         assert plan.c_target is not None
 
 
-class TestControllerActive:
-    def test_returns_false_when_disabled(self):
-        try:
-            from scene.gaussian_model import GaussianModel
-        except ImportError:
-            pytest.skip("gaussian_model import requires CUDA environment")
-        g = GaussianModel.__new__(GaussianModel)
-        g._controller_enabled = False
-        g._controller_fired = False
-        g._controller_update_until = 99999
-        g._controller_test_iteration = 100
-        assert not g.controller_active(100)
-
-    def test_returns_false_when_already_fired(self):
-        try:
-            from scene.gaussian_model import GaussianModel
-        except ImportError:
-            pytest.skip("gaussian_model import requires CUDA environment")
-        g = GaussianModel.__new__(GaussianModel)
-        g._controller_enabled = True
-        g._controller_fired = True
-        g._controller_update_until = 99999
-        g._controller_test_iteration = 100
-        assert not g.controller_active(100)
-
-    def test_returns_false_beyond_update_until(self):
-        try:
-            from scene.gaussian_model import GaussianModel
-        except ImportError:
-            pytest.skip("gaussian_model import requires CUDA environment")
-        g = GaussianModel.__new__(GaussianModel)
-        g._controller_enabled = True
-        g._controller_fired = False
-        g._controller_update_until = 50
-        g._controller_test_iteration = 100
-        assert not g.controller_active(100)
-
-    def test_fires_once_at_test_iteration(self):
-        try:
-            from scene.gaussian_model import GaussianModel
-        except ImportError:
-            pytest.skip("gaussian_model import requires CUDA environment")
-        g = GaussianModel.__new__(GaussianModel)
-        g._controller_enabled = True
-        g._controller_fired = False
-        g._controller_update_until = 99999
-        g._controller_test_iteration = 1500
-        assert g.controller_active(1500)
-        assert g._controller_fired
-        assert not g.controller_active(1500)
 
 
 class TestBTotal:

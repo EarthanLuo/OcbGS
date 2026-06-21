@@ -163,7 +163,11 @@ class OptimizationParams(ParamGroup):
 
         self.B_total = -1
 
+        self.controller_enabled = True
+
         super().__init__(parser, "Optimization Parameters")
+        parser.add_argument("--no_controller", dest="controller_enabled", action="store_false",
+                            help="Disable demand-driven budget reallocation controller")
 
 def get_combined_args(parser : ArgumentParser):
     cmdlne_string = sys.argv[1:]

@@ -193,6 +193,12 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
                         min_opacity=opt.min_opacity
                     )
             elif iteration == opt.update_until:
+                if (getattr(opt, 'controller_enabled', False)
+                        and gaussians.controller is not None):
+                    if gaussians.controller.reached_phase2:
+                        logger.info(f"[CONTROLLER] Phase 2 REACHED by update_until={opt.update_until}")
+                    else:
+                        logger.info(f"[CONTROLLER] Phase 2 NOT reached by update_until={opt.update_until}")
                 del gaussians.opacity_accum
                 del gaussians.offset_gradient_accum
                 del gaussians.offset_denom
