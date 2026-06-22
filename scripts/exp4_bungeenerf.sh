@@ -58,7 +58,7 @@ for SCENE in $SCENES; do
             -m "$DST/arm_a/seed_0" \
             --fork 2 --base_layer 10 --visible_threshold 0.0 \
             --dist2level round --update_ratio 0.2 \
-            --progressive True --levels -1 --dist_ratio 0.99 \
+            --progressive --levels -1 --dist_ratio 0.99 \
             --init_level -1 --extra_ratio 0.25 --extra_up 0.01 \
             --iterations $ITERS --update_until $UPDATE_UNTIL \
             --test_iterations $UPDATE_UNTIL $ITERS \
@@ -97,7 +97,7 @@ for SCENE in $SCENES; do
             -m "$DST/arm_b/seed_$seed" \
             --fork 2 --base_layer 10 --visible_threshold 0.0 \
             --dist2level round --update_ratio 0.2 \
-            --progressive True --levels -1 --dist_ratio 0.99 \
+            --progressive --levels -1 --dist_ratio 0.99 \
             --init_level -1 --extra_ratio 0.25 --extra_up 0.01 \
             --iterations $ITERS --update_until $UPDATE_UNTIL \
             --test_iterations "${CHECKPOINTS[@]}" $ITERS \
@@ -118,7 +118,7 @@ for SCENE in $SCENES; do
             -m "$DST/arm_c/seed_$seed" \
             --fork 2 --base_layer 10 --visible_threshold 0.0 \
             --dist2level round --update_ratio 0.2 \
-            --progressive True --levels -1 --dist_ratio 0.99 \
+            --progressive --levels -1 --dist_ratio 0.99 \
             --init_level -1 --extra_ratio 0.25 --extra_up 0.01 \
             --iterations $ITERS --update_until $UPDATE_UNTIL \
             --test_iterations "${CHECKPOINTS[@]}" $ITERS \
