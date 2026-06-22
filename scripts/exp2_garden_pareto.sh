@@ -109,7 +109,6 @@ PARETO_SKIPS="$DST/pareto_skips.log"
 > "$PARETO_SKIPS"
 
 ARM_SUMMARIES=()
-ARM_LABELS=()
 
 for factor in "${FACTORS[@]}"; do
     B_val=$(python -c "print(int($B_TOTAL * $factor))")
@@ -120,8 +119,38 @@ for factor in "${FACTORS[@]}"; do
     echo ""
     echo "--- Factor $factor (B_total=$B_val) ---"
 
+    # Feasibility probe: seed_0 runs synchronously (no &) so the exit
+    # code reflects set_control_level's guard.  Feasibility depends only
+    # on SfM initial anchors + fixed floor/B_val — no RNG involved, so
+    # one seed suffices.  Skip probe if seed_0 already completed (resume).
+    if [ -f "$armdir/seed_0/results.json" ]; then
+        echo "  seed=0 — DONE (skip probe)"
+    else
+        PROBE_ARGS=(
+            -s "$SRC" --ds 8
+            -m "$armdir/seed_0"
+            --fork 2 --base_layer 10 --visible_threshold 0.0
+            --dist2level round --update_ratio 0.2
+            --iterations $ITERS --update_until $UPDATE_UNTIL
+            --test_iterations "${SAVE_CHECKPOINTS[@]}" $ITERS
+            --save_iterations "${SAVE_CHECKPOINTS[@]}" $ITERS
+            --seed 0 --port $((6009 + RANDOM % 1000))
+            --B_total $B_val
+        )
+        echo "  seed=0 (feasibility probe)"
+        if ! python ocbgs/train.py "${PROBE_ARGS[@]}"; then
+            echo "  factor=$factor INFEASIBLE (set_control_level guard fired) — skip" >> "$PARETO_SKIPS"
+            ARM_SUMMARIES+=("$label=INFEASIBLE")
+            continue
+        fi
+    fi
+
+    # Seed 0 feasible — run remaining seeds in parallel.
     _running=0
     for seed in "${SEEDS[@]}"; do
+        if [ "$seed" -eq 0 ]; then
+            continue  # seed_0 already done above
+        fi
         if [ -f "$armdir/seed_$seed/results.json" ]; then
             echo "  seed=$seed — DONE (skip)"
             continue
@@ -132,7 +161,7 @@ for factor in "${FACTORS[@]}"; do
         done
         echo "  seed=$seed"
         PORT=$((6009 + RANDOM % 1000))
-        if python ocbgs/train.py \
+        python ocbgs/train.py \
             -s "$SRC" --ds 8 \
             -m "$armdir/seed_$seed" \
             --fork 2 --base_layer 10 --visible_threshold 0.0 \
@@ -141,13 +170,9 @@ for factor in "${FACTORS[@]}"; do
             --test_iterations "${SAVE_CHECKPOINTS[@]}" $ITERS \
             --save_iterations "${SAVE_CHECKPOINTS[@]}" $ITERS \
             --seed $seed --port $PORT \
-            --B_total $B_val & then
-            (( _running++ )) || true
-            sleep 10s
-        else
-            echo "  factor=$factor INFEASIBLE (set_control_level guard fired) — skip" >> "$PARETO_SKIPS"
-            break
-        fi
+            --B_total $B_val &
+        (( _running++ )) || true
+        sleep 10s
     done
     wait
 
@@ -172,8 +197,18 @@ python scripts/collect_results.py metrics \
 TABLE_ARGS=()
 TABLE_ARGS+=("--arm" "baseline=$BASELINE_SUMMARY")
 for entry in "${ARM_SUMMARIES[@]}"; do
-    TABLE_ARGS+=("--arm" "$entry")
+    label="${entry%%=*}"
+    path="${entry#*=}"
+    if [ "$path" = "INFEASIBLE" ]; then
+        continue  # skip infeasible factors from the table
+    fi
+    TABLE_ARGS+=("--arm" "$label=$path")
 done
+
+INFEASIBLE_COUNT=$(grep -c "INFEASIBLE" "$PARETO_SKIPS" 2>/dev/null || true)
+if [ "$INFEASIBLE_COUNT" -gt 0 ]; then
+    echo "  (${INFEASIBLE_COUNT} factor(s) skipped as INFEASIBLE)"
+fi
 
 python scripts/collect_results.py table \
     "${TABLE_ARGS[@]}" \
@@ -192,14 +227,16 @@ python scripts/collect_results.py total_points \
 for factor in "${FACTORS[@]}"; do
     label="${factor}x"
     armdir="$DST/arm_$label"
-    if [ -d "$armdir/seed_0" ]; then
+    if grep -q "^  factor=$factor INFEASIBLE" "$PARETO_SKIPS" 2>/dev/null; then
+        echo "  $label: INFEASIBLE (see $PARETO_SKIPS)"
+    elif [ -f "$armdir/seed_0/results.json" ]; then
         echo "  $label:"
         python scripts/collect_results.py total_points \
             --glob "$armdir/seed_*" \
             --step $UPDATE_UNTIL \
             --aggregate mean
     else
-        echo "  $label: INFEASIBLE (see $PARETO_SKIPS)"
+        echo "  $label: no results"
     fi
 done
 
