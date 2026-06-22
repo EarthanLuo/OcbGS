@@ -288,6 +288,102 @@ def cmd_compare(args):
 
 
 # ---------------------------------------------------------------------------
+# Subcommand: table
+# ---------------------------------------------------------------------------
+
+def _parse_table_args(argv):
+    parser = argparse.ArgumentParser(prog="table")
+    parser.add_argument("--arm", type=str, action="append", required=True,
+                        help="Arm label=path pairs (repeatable)")
+    parser.add_argument("--baseline-label", default=None,
+                        help="Label of the arm to use as Δ baseline")
+    parser.add_argument("--metrics", nargs="+", default=["PSNR", "SSIM", "LPIPS"],
+                        help="Metrics to tabulate (default PSNR SSIM LPIPS)")
+    if argv and argv[0] == "table":
+        argv = argv[1:]
+    return parser.parse_args(argv)
+
+
+def cmd_table(args):
+    arms = {}
+    for entry in args.arm:
+        if "=" not in entry:
+            print(f"ERROR: --arm must be label=path, got '{entry}'")
+            sys.exit(1)
+        label, path = entry.split("=", 1)
+        if label in arms:
+            print(f"ERROR: duplicate arm label '{label}'")
+            sys.exit(1)
+        arms[label] = path
+
+    if len(arms) < 1:
+        print("ERROR: at least one --arm required")
+        sys.exit(1)
+
+    data = {}
+    for label, path in arms.items():
+        if not os.path.exists(path):
+            print(f"ERROR: arm '{label}' file not found: {path}")
+            sys.exit(1)
+        d = _load_summary(path)
+        data[label] = d.get("summary", d)
+
+    if args.baseline_label and args.baseline_label not in data:
+        print(f"ERROR: baseline label '{args.baseline_label}' not found in arms")
+        sys.exit(1)
+
+    checkpoints = set()
+    for label in data:
+        checkpoints.update(data[label].keys())
+    if not checkpoints:
+        print("(no checkpoints found)")
+        return
+    checkpoints = sorted(checkpoints)
+
+    baseline_label = args.baseline_label if args.baseline_label else list(arms.keys())[0]
+    labels = list(arms.keys())
+    metrics = args.metrics
+
+    for metric in metrics:
+        print(f"\n=== {metric} ===")
+
+        header_cols = ["checkpoint"]
+        for label in labels:
+            header_cols.append(f"{label}_μ")
+            if label != baseline_label:
+                header_cols.append(f"Δ_{label}")
+
+        header = "  ".join(f"{c:>14}" for c in header_cols)
+        print(header)
+        print("-" * len(header))
+
+        for cp in checkpoints:
+            ref_entry = data[baseline_label].get(cp)
+            ref_val = ref_entry[metric]["mean"] if ref_entry else None
+
+            row = [f"{cp:>14}"]
+            for label in labels:
+                entry = data[label].get(cp)
+                if entry is None:
+                    row.append(f"{'—':>14}")
+                    if label != baseline_label:
+                        row.append(f"{'—':>14}")
+                    continue
+                val = entry[metric]["mean"]
+                row.append(f"{val:>14.4f}")
+                if label != baseline_label:
+                    if ref_val is not None:
+                        delta = val - ref_val
+                        row.append(f"{delta:>+14.4f}")
+                    else:
+                        row.append(f"{'—':>14}")
+
+            print("  ".join(row))
+
+    print()
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -315,6 +411,15 @@ def main():
     p_c.add_argument("--a-plus-b", required=True, help="A+B summary JSON")
     p_c.add_argument("--sigma", required=True, help="Sigma summary JSON (A-only noise floor)")
 
+    # table
+    p_t = sub.add_parser("table", help="Tabulate metrics across multiple arms")
+    p_t.add_argument("--arm", type=str, action="append", required=True,
+                     help="Arm label=path pairs (repeatable, e.g. --arm baseline=summary.json)")
+    p_t.add_argument("--baseline-label", default=None,
+                     help="Label of the arm to use as Δ baseline")
+    p_t.add_argument("--metrics", nargs="+", default=["PSNR", "SSIM", "LPIPS"],
+                     help="Metrics to tabulate (default: PSNR SSIM LPIPS)")
+
     args = parser.parse_args()
     if args.command == "total_points":
         cmd_total_points(args)
@@ -322,6 +427,8 @@ def main():
         cmd_metrics(args)
     elif args.command == "compare":
         cmd_compare(args)
+    elif args.command == "table":
+        cmd_table(args)
     else:
         parser.print_help()
 
