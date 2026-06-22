@@ -169,10 +169,13 @@ class OptimizationParams(ParamGroup):
         self.b_camlist_size = 16
         self.b_refresh_period = 100
         self.fusion_lambda = 0.0
+        self.plateau_enabled = True
 
         super().__init__(parser, "Optimization Parameters")
         parser.add_argument("--no_controller", dest="controller_enabled", action="store_false",
                             help="Disable demand-driven budget reallocation controller")
+        parser.add_argument("--no_plateau", dest="plateau_enabled", action="store_false",
+                            help="Disable plateau fallback (matched-budget: force N_total >= B_total)")
 
 def get_combined_args(parser : ArgumentParser):
     cmdlne_string = sys.argv[1:]

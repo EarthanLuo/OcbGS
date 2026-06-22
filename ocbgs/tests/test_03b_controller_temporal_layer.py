@@ -210,6 +210,25 @@ class TestPlateauFallback:
         assert bc._reached_phase2
         assert occupancy.sum().item() == 50 < B_total
 
+    def test_plateau_disabled_stays_in_ramp(self):
+        bc = TemporalBudgetController(
+            tau_smooth=3, k=2, spearman_threshold=0.9,
+            plateau_enabled=False
+        )
+        B_total = 200
+        cell_ids = torch.arange(5, dtype=torch.long)
+        occupancy = torch.tensor([10, 10, 10, 10, 10], dtype=torch.long)
+        d = torch.tensor([5.0, 3.0, 7.0, 9.0, 1.0])
+
+        for _ in range(bc.tau_smooth + bc.k + 5):
+            bc.plan(cell_ids, d, occupancy, B_total)
+
+        assert bc._phase == "ramp", (
+            "plateau_enabled=False: even with stable N_total < B_total, "
+            "must stay in ramp"
+        )
+        assert not bc._reached_phase2
+
 
 class TestPlanSignature:
     def test_phase_determined_internally_not_passed_by_caller(self):
@@ -390,3 +409,7 @@ class TestTemporalBudgetControllerSubclass:
         impl_sig = inspect.signature(TemporalBudgetController.plan)
         for name in sig.parameters:
             assert name in impl_sig.parameters
+
+    def test_default_plateau_true_backward_compat(self):
+        bc = TemporalBudgetController()
+        assert bc.plateau_enabled is True

@@ -444,7 +444,8 @@ class GaussianModel:
             voxel_size=self.voxel_size, fork=self.fork,
             levels=self.levels, init_pos=self.init_pos
         )
-        self.controller = TemporalBudgetController()
+        self.controller = TemporalBudgetController(
+            plateau_enabled=getattr(training_args, 'plateau_enabled', True))
         
         l = [
             {'params': [self._anchor], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "anchor"},

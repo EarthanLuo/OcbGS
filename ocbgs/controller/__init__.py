@@ -265,13 +265,15 @@ class TemporalBudgetController(StaticBudgetController):
     """
 
     def __init__(self, floor=1, k_cap=8, theta_frac=0.25, rate_limit=0.05,
-                 tau_smooth=3, k=3, spearman_threshold=0.9, fusion_lambda=0.0):
+                 tau_smooth=3, k=3, spearman_threshold=0.9, fusion_lambda=0.0,
+                 plateau_enabled=True):
         super().__init__(floor=floor, k_cap=k_cap, theta_frac=theta_frac,
                          rate_limit=rate_limit)
         self.tau_smooth = tau_smooth
         self.k = k
         self.spearman_threshold = spearman_threshold
         self.fusion_lambda = fusion_lambda
+        self.plateau_enabled = plateau_enabled
         self._reset_state()
 
     def _reset_state(self):
@@ -345,7 +347,8 @@ class TemporalBudgetController(StaticBudgetController):
         self._n_total_prev = N_total
 
         if self._phase == "ramp":
-            plateau_eligible = (self._plateau_count >= self.k and
+            plateau_eligible = (self.plateau_enabled and
+                                self._plateau_count >= self.k and
                                 self._stable_count >= self.k)
             if (N_total >= B_total and self._stable_count >= self.k) or plateau_eligible:
                 self._phase = "steady"
