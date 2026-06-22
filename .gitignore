@@ -1,3 +1,6 @@
 .claude/
 .understand-anything/
 docs/literature/
+__pycache__/
+*.pyc
+*.pyo
