@@ -67,6 +67,24 @@ def test_refresh_renders_zeroes_and_writes_cache():
     assert ms >= 0.0
 
 
+def test_demand_b_none_returns_no_b_without_crashing():
+    # A-only arm (b_enabled=False) → demand_b is None. Even on a refresh step
+    # (_b_step % period == 0), evaluate_source_b must short-circuit to "no B":
+    # it must not render and must not call .produce() on None.
+    model = types.SimpleNamespace(_b_step=3, _b_cache=None)
+
+    def must_not_render(*a, **k):
+        raise AssertionError("render must not run when demand_b is None")
+
+    d_b, ms = evaluate_source_b(
+        model, train_cameras=["camA", "camB"], pipe=None, bg=None,
+        demand_b=None, partition=None, cfg=_fake_cfg(period=3, camlist=2),
+        render_fn=must_not_render)
+
+    assert d_b is None
+    assert ms is None
+
+
 def test_hold_returns_identical_cache_after_refresh():
     N = 1
     model = types.SimpleNamespace(

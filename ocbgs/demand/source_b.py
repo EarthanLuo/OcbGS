@@ -5,6 +5,10 @@ from demand import PhotometricDemand, KEY_PHOTOMETRIC_ERROR_ACCUM
 
 
 def evaluate_source_b(model, train_cameras, pipe, bg, demand_b, partition, cfg, render_fn=None):
+    if demand_b is None:
+        # A-only arm (b_enabled=False): no Source B producer. Short-circuit to
+        # "no B" so the caller falls back to the A-only controller path.
+        return None, None
     if model._b_step % cfg.b_refresh_period != 0:
         return model._b_cache, None
     if render_fn is None:
