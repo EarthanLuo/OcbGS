@@ -86,48 +86,56 @@ for SCENE in $SCENES; do
     _running=0
     for seed in "${SEEDS[@]}"; do
         # Arm B — A-only
-        while (( _running >= MAX_JOBS )); do
-            wait -n 2>/dev/null || true
-            (( _running-- )) || true
-        done
-        echo "  arm_b seed=$seed"
-        PORT=$((6009 + RANDOM % 1000))
-        python ocbgs/train.py \
-            -s "$SRC" \
-            -m "$DST/arm_b/seed_$seed" \
-            --fork 2 --base_layer 10 --visible_threshold 0.0 \
-            --dist2level round --update_ratio 0.2 \
-            --progressive --levels -1 --dist_ratio 0.99 \
-            --init_level -1 --extra_ratio 0.25 --extra_up 0.01 \
-            --iterations $ITERS --update_until $UPDATE_UNTIL \
-            --test_iterations "${CHECKPOINTS[@]}" $ITERS \
-            --save_iterations $UPDATE_UNTIL $ITERS \
-            --seed $seed --port $PORT --B_total $B_TOTAL &
-        (( _running++ ))
-        sleep 10s
+        if [ -f "$DST/arm_b/seed_$seed/results.json" ]; then
+            echo "  arm_b seed=$seed — DONE (skip)"
+        else
+            while (( _running >= MAX_JOBS )); do
+                wait -n 2>/dev/null || true
+                (( _running-- )) || true
+            done
+            echo "  arm_b seed=$seed"
+            PORT=$((6009 + RANDOM % 1000))
+            python ocbgs/train.py \
+                -s "$SRC" \
+                -m "$DST/arm_b/seed_$seed" \
+                --fork 2 --base_layer 10 --visible_threshold 0.0 \
+                --dist2level round --update_ratio 0.2 \
+                --progressive --levels -1 --dist_ratio 0.99 \
+                --init_level -1 --extra_ratio 0.25 --extra_up 0.01 \
+                --iterations $ITERS --update_until $UPDATE_UNTIL \
+                --test_iterations "${CHECKPOINTS[@]}" $ITERS \
+                --save_iterations $UPDATE_UNTIL $ITERS \
+                --seed $seed --port $PORT --B_total $B_TOTAL &
+            (( _running++ )) || true
+            sleep 10s
+        fi
 
         # Arm C — A+B (λ=1, M=10, K=16)
-        while (( _running >= MAX_JOBS )); do
-            wait -n 2>/dev/null || true
-            (( _running-- )) || true
-        done
-        echo "  arm_c seed=$seed"
-        PORT=$((6009 + RANDOM % 1000))
-        python ocbgs/train.py \
-            -s "$SRC" \
-            -m "$DST/arm_c/seed_$seed" \
-            --fork 2 --base_layer 10 --visible_threshold 0.0 \
-            --dist2level round --update_ratio 0.2 \
-            --progressive --levels -1 --dist_ratio 0.99 \
-            --init_level -1 --extra_ratio 0.25 --extra_up 0.01 \
-            --iterations $ITERS --update_until $UPDATE_UNTIL \
-            --test_iterations "${CHECKPOINTS[@]}" $ITERS \
-            --save_iterations $UPDATE_UNTIL $ITERS \
-            --seed $seed --port $PORT --B_total $B_TOTAL \
-            --b_enabled --fusion_lambda 1.0 \
-            --b_camlist_size 16 --b_refresh_period 10 &
-        (( _running++ ))
-        sleep 10s
+        if [ -f "$DST/arm_c/seed_$seed/results.json" ]; then
+            echo "  arm_c seed=$seed — DONE (skip)"
+        else
+            while (( _running >= MAX_JOBS )); do
+                wait -n 2>/dev/null || true
+                (( _running-- )) || true
+            done
+            echo "  arm_c seed=$seed"
+            PORT=$((6009 + RANDOM % 1000))
+            python ocbgs/train.py \
+                -s "$SRC" \
+                -m "$DST/arm_c/seed_$seed" \
+                --fork 2 --base_layer 10 --visible_threshold 0.0 \
+                --dist2level round --update_ratio 0.2 \
+                --progressive --levels -1 --dist_ratio 0.99 \
+                --init_level -1 --extra_ratio 0.25 --extra_up 0.01 \
+                --iterations $ITERS --update_until $UPDATE_UNTIL \
+                --test_iterations "${CHECKPOINTS[@]}" $ITERS \
+                --save_iterations $UPDATE_UNTIL $ITERS \
+                --seed $seed --port $PORT --B_total $B_TOTAL \
+                --b_enabled --fusion_lambda 1.0 \
+                --b_camlist_size 16 --b_refresh_period 10 &
+            (( _running++ )) || true
+            sleep 10s
+        fi
     done
     wait
 
