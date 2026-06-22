@@ -1,6 +1,6 @@
 # Issue: `set_control_level` emits a misleading error when B_total is too small for the scene
 
-**Status:** ready-for-agent
+**Status:** DONE
 
 ## Context
 
@@ -28,11 +28,11 @@ In `OctreePartition.set_control_level`, after the feasibility loop and the A_min
 
 ## Acceptance criteria
 
-- [ ] `set_control_level` raises a `ValueError` whose message names `B_total`, `N_active`, and the `floor*N_active` lower bound when the budget cannot give every occupied coarsest-level cell its floor.
-- [ ] The error is raised from `set_control_level` (derivation time), not deferred to `controller._allocate`.
-- [ ] A feasible-budget call (e.g. `B_total >= floor*N_active`) is unaffected — derivation returns the same level as before.
-- [ ] Fallback level selection is unchanged (still coarsest level meeting `A_min`); a unit test asserts it picks the coarsest, not the finest.
-- [ ] Pure-logic unit tests only (no CUDA); runnable locally against `OctreePartition` directly.
+- [x] `set_control_level` raises a `ValueError` whose message names `B_total`, `N_active`, and the `floor*N_active` lower bound when the budget cannot give every occupied coarsest-level cell its floor.
+- [x] The error is raised from `set_control_level` (derivation time), not deferred to `controller._allocate`.
+- [x] A feasible-budget call (e.g. `B_total >= floor*N_active`) is unaffected — derivation returns the same level as before.
+- [x] Fallback level selection is unchanged (still coarsest level meeting `A_min`); a unit test asserts it picks the coarsest, not the finest.
+- [x] Pure-logic unit tests only (no CUDA); runnable locally against `OctreePartition` directly.
 
 ## Notes
 
