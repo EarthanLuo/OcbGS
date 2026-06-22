@@ -29,8 +29,8 @@ import math
 from demand import ErrorVisibilityDemand, KEY_ANCHOR_DEMON, KEY_OFFSET_GRADIENT_ACCUM, KEY_OFFSET_DENOM
 from demand.source_b import evaluate_source_b
 from demand import PhotometricDemand
-from partition import OctreePartition
-from controller import TemporalBudgetController, align_demand_b
+from partition import build_partition
+from controller import build_controller, align_demand_b
     
 class GaussianModel:
 
@@ -439,13 +439,10 @@ class GaussianModel:
             check_interval=training_args.update_interval,
             success_threshold=training_args.success_threshold
         )
-        self.partition = OctreePartition(
-            B_total=self.B_total, floor=1, rho_min=8, A_min=10,
+        self.partition = build_partition(training_args,
             voxel_size=self.voxel_size, fork=self.fork,
-            levels=self.levels, init_pos=self.init_pos
-        )
-        self.controller = TemporalBudgetController(
-            plateau_enabled=getattr(training_args, 'plateau_enabled', True))
+            levels=self.levels, init_pos=self.init_pos)
+        self.controller = build_controller(training_args)
         
         l = [
             {'params': [self._anchor], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "anchor"},

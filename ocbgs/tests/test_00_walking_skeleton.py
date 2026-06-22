@@ -220,6 +220,16 @@ class TestBTotal:
         assert hasattr(op, 'B_total')
         assert op.B_total == -1
 
+    def test_ablation_knobs_default_values(self):
+        from arguments import OptimizationParams
+        from argparse import ArgumentParser
+        parser = ArgumentParser()
+        op = OptimizationParams(parser)
+        assert op.rho_min == 8
+        assert op.k_cap == 8
+        assert op.rate_limit == 0.05
+        assert op.tau_smooth == 3
+
     def test_gaussian_model_constructor_accepts_B_total(self):
         try:
             from scene.gaussian_model import GaussianModel
@@ -229,6 +239,51 @@ class TestBTotal:
         sig = inspect.signature(GaussianModel.__init__)
         assert 'B_total' in sig.parameters
         assert sig.parameters['B_total'].default == -1
+
+
+class TestAblationKnobFactories:
+    def test_build_controller_forwards_knobs(self):
+        from types import SimpleNamespace
+        from controller import build_controller
+        opt = SimpleNamespace(
+            k_cap=16, rate_limit=0.10, tau_smooth=7,
+            plateau_enabled=True,
+        )
+        bc = build_controller(opt)
+        assert bc.k_cap == 16
+        assert bc.rate_limit == 0.10
+        assert bc.tau_smooth == 7
+        assert bc.plateau_enabled is True
+
+    def test_build_controller_defaults_backward_compat(self):
+        from types import SimpleNamespace
+        from controller import build_controller
+        opt = SimpleNamespace()
+        bc = build_controller(opt)
+        assert bc.k_cap == 8
+        assert bc.rate_limit == 0.05
+        assert bc.tau_smooth == 3
+        assert bc.plateau_enabled is True
+
+    def test_build_partition_forwards_knobs(self):
+        from types import SimpleNamespace
+        from partition import build_partition
+        opt = SimpleNamespace(rho_min=4, B_total=500)
+        p = build_partition(opt,
+            voxel_size=2.0, fork=2, levels=5,
+            init_pos=torch.tensor([0.0, 0.0, 0.0]))
+        assert p._rho_min == 4
+        assert p._B_total == 500
+
+    def test_build_partition_defaults_backward_compat(self):
+        from types import SimpleNamespace
+        from partition import build_partition
+        opt = SimpleNamespace()
+        p = build_partition(opt,
+            voxel_size=2.0, fork=2, levels=5,
+            init_pos=torch.tensor([0.0, 0.0, 0.0]))
+        assert p._rho_min == 8
+        assert p._B_total == -1
 
 
 class TestSeedSupport:

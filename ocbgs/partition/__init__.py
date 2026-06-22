@@ -248,3 +248,14 @@ class StubPartition(Partition):
         d_v = weights.sum().unsqueeze(0)
         cell_ids = torch.zeros(1, dtype=torch.long, device=weights.device)
         return cell_ids, d_v
+
+
+def build_partition(training_args, voxel_size, fork, levels, init_pos):
+    return OctreePartition(
+        B_total=getattr(training_args, 'B_total', -1),
+        floor=1,
+        rho_min=getattr(training_args, 'rho_min', 8),
+        A_min=10,
+        voxel_size=voxel_size, fork=fork,
+        levels=levels, init_pos=init_pos,
+    )

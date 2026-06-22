@@ -405,3 +405,12 @@ def align_demand_b(cell_ids, b_cache):
     return torch.tensor([b_cache.get(int(c), 0.0) for c in cell_ids.tolist()],
                         dtype=torch.float32,
                         device=cell_ids.device)
+
+
+def build_controller(training_args):
+    return TemporalBudgetController(
+        k_cap=getattr(training_args, 'k_cap', 8),
+        rate_limit=getattr(training_args, 'rate_limit', 0.05),
+        tau_smooth=getattr(training_args, 'tau_smooth', 3),
+        plateau_enabled=getattr(training_args, 'plateau_enabled', True),
+    )
