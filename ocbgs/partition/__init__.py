@@ -159,6 +159,19 @@ class OctreePartition(Partition):
                 f"falling back to finest level {best_level_feasible}"
             )
 
+        cell_size_chosen = self._voxel_size / (float(self._fork) ** best_level_feasible)
+        cell_coords_chosen = torch.round(
+            (positions - self._init_pos) / cell_size_chosen
+        ).long()
+        N_active_chosen = torch.unique(cell_coords_chosen, dim=0).shape[0]
+        if N_active_chosen > 0 and self._floor * N_active_chosen > self._B_total:
+            raise ValueError(
+                f"B_total={self._B_total} too small for scene: "
+                f"control level {best_level_feasible} has {N_active_chosen} "
+                f"occupied cells; need B_total >= floor*N_active="
+                f"{self._floor * N_active_chosen}"
+            )
+
         self._control_level = best_level_feasible
         self._cell_size = self._voxel_size / (float(self._fork) ** self._control_level)
         return self._control_level

@@ -99,7 +99,8 @@ class TestSetControlLevel:
         assert p._floor * N_active < p._B_total
 
     def test_fallback_when_no_level_satisfies_rho_min(self):
-        p = OctreePartition(**{**_CONF, 'B_total': 10, 'rho_min': 100, 'A_min': 1})
+        torch.manual_seed(0)
+        p = OctreePartition(**{**_CONF, 'B_total': 500, 'rho_min': 100, 'A_min': 1})
         positions = torch.randn(50, 3, dtype=torch.float32)
         level = p.set_control_level(positions)
         assert isinstance(level, int)
@@ -115,6 +116,43 @@ class TestSetControlLevel:
         assert isinstance(level, int)
         assert level == _CONF['levels'] - 1
         assert p._cell_size is not None
+
+    def test_undersized_B_total_raises_clear_error(self):
+        torch.manual_seed(0)
+        B_total = 10
+        floor = 1
+        p = OctreePartition(
+            B_total=B_total, floor=floor, rho_min=100, A_min=1,
+            voxel_size=2.0, fork=2, levels=5,
+            init_pos=torch.tensor([0.0, 0.0, 0.0]),
+        )
+        positions = torch.randn(50, 3, dtype=torch.float32)
+        with pytest.raises(ValueError) as exc_info:
+            p.set_control_level(positions)
+        msg = str(exc_info.value)
+        assert "B_total=10" in msg
+        assert "occupied cells" in msg
+        assert "floor*N_active=" in msg
+        import re
+        m = re.search(r"floor\*N_active=(\d+)", msg)
+        assert m is not None
+        assert int(m.group(1)) > B_total
+
+    def test_fallback_picks_coarsest_not_finest(self):
+        p = OctreePartition(
+            B_total=500, floor=5, rho_min=1000, A_min=2,
+            voxel_size=2.0, fork=2, levels=5,
+            init_pos=torch.tensor([0.0, 0.0, 0.0]),
+        )
+        positions = torch.tensor(
+            [[i * 5.0, 0.0, 0.0] for i in range(10)],
+            dtype=torch.float32,
+        )
+        level = p.set_control_level(positions)
+        assert level == 0, (
+            f"Expected coarsest level 0, got {level}. "
+            "Fallback iteration direction may have been reversed."
+        )
 
 
 class TestCellId:

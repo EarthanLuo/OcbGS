@@ -78,7 +78,8 @@ class StaticBudgetController(BudgetController):
         if self.floor * N_active > B_total:
             raise ValueError(
                 f"\u03a3floor ({self.floor * N_active}) > B_total ({B_total}); "
-                f"control_level derivation should preclude this"
+                f"budget infeasible at allocation time "
+                f"(active cells may have grown past derivation-time count)"
             )
 
         d_sum = d.sum().item()
