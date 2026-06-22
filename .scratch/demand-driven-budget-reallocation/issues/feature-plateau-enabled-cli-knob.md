@@ -1,6 +1,6 @@
 # Issue: Expose `plateau_enabled` knob to CLI
 
-**Status:** ready-for-agent
+**Status:** DONE
 
 ## Context
 
@@ -29,8 +29,12 @@ This issue exposes the knob so Exp 1 can toggle matched vs natural from the comm
 
 ## Acceptance criteria
 
-- [ ] `--no_plateau` on CLI sets `plateau_enabled=False`, preventing early steady entry when N_total < B_total.
-- [ ] Default (`plateau_enabled=True`) preserves existing behavior — backward compatible.
-- [ ] `TemporalBudgetController(plateau_enabled=False)` + fed plateau + stable sequence → stays in "ramp".
-- [ ] `TemporalBudgetController(plateau_enabled=True)` + same sequence → enters "steady" (existing behavior).
-- [ ] Pure-logic unit tests only (no CUDA); runnable locally.
+- [x] `--no_plateau` on CLI sets `plateau_enabled=False`, preventing early steady entry when N_total < B_total.
+- [x] Default (`plateau_enabled=True`) preserves existing behavior — backward compatible.
+- [x] `TemporalBudgetController(plateau_enabled=False)` + fed plateau + stable sequence → stays in "ramp".
+- [x] `TemporalBudgetController(plateau_enabled=True)` + same sequence → enters "steady" (existing behavior).
+- [x] Pure-logic unit tests only (no CUDA); runnable locally.
+
+## Carry-forward to Exp 1
+
+This issue validates the knob logic only (controller stays in ramp when plateau is disabled). Whether matched-budget training actually achieves `Σn ≈ B_total` in practice is a training-time property requiring GPU runs — out of scope here. Exp 1 acceptance must include: after matched-budget arm completes, verify `Σn ≈ B_total` (within tolerance); if it does not, the "strictly equal #anchors" claim does not hold.
