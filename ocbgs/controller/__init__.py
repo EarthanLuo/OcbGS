@@ -135,14 +135,14 @@ class StaticBudgetController(BudgetController):
 
         delta = c_target - n
 
-        thr = torch.maximum(
-            torch.tensor(1.0, device=device),
-            self.theta_frac * c_target.float()
-        )
-        zero_mask = delta.abs().float() < thr
-        delta = torch.where(zero_mask, torch.zeros_like(delta), delta)
-
         if phase == "steady":
+            thr = torch.maximum(
+                torch.tensor(1.0, device=device),
+                self.theta_frac * c_target.float()
+            )
+            zero_mask = delta.abs().float() < thr
+            delta = torch.where(zero_mask, torch.zeros_like(delta), delta)
+
             sum_abs = delta.abs().sum().item()
             limit = self.rate_limit * B_total
             if sum_abs > limit:

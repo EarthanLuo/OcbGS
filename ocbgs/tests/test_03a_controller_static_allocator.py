@@ -306,6 +306,23 @@ class TestExtremeBTotal:
             bc._allocate(cell_ids, d, occupancy, B_total=1, phase="steady")
 
 
+def test_ramp_keeps_small_deficit_growth():
+    """ramp dead-band bug regression: deficit < thr should NOT be zeroed.
+    m=10 → thr=0.25*10=2.5. occ=9 → deficit=1 < 2.5 → currently zeroed (bug).
+    After fix (dead-band only in steady), delta=1 survives → Σn grows."""
+    bc = StaticBudgetController(floor=1, k_cap=8)
+    B_total, C = 100, 10
+    cell_ids = torch.arange(C, dtype=torch.long)
+    d = torch.ones(C)
+    occupancy = torch.full((C,), 9, dtype=torch.long)
+    plan = bc.plan(cell_ids, d, occupancy, B_total)
+    grown = (occupancy + plan.delta).sum().item()
+    assert grown == pytest.approx(B_total, abs=1), (
+        f"ramp dead-banded a real deficit: "
+        f"\u03a3n={grown} stuck below B_total={B_total}"
+    )
+
+
 class TestSubclassCompliance:
     def test_is_budget_controller(self):
         bc = StaticBudgetController()
