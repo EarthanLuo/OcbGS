@@ -19,19 +19,28 @@ A prior implementation, **OCB-3DGS-HR** (gsplat-based, `D:\01_Projects\Active\Pa
 
 The current **OcbGS** codebase (vendored Octree-GS) was started precisely to build the *training-side* — demand-driven budget allocation *during* training — which is where the novelty/moat lives, because "better where it matters at equal budget" is fundamentally a training-time act (it changes where capacity went), only ever *observed* by rendering. The two codebases are complementary halves: render-side done (OCB-3DGS-HR, now a **comparison baseline**), training-side the live bet (OcbGS, this mainline). The proposal's soul — **one budget governing both training and rendering (训练-渲染一体化)** — is the unbuilt seam between them; closing it (at the level scoped in §2/§8) is a graduation-core deliverable, not a stretch goal.
 
+### Update 2026-06-27 — actuator-relax experiment: B demoted, controllable budget promoted
+
+The 73% budget undershoot was traced in code to the actuator only ever *filtering* native gradient-spawned candidates (`anchor_growing_capped` → `_anchor_growing_gather` gates candidate creation on `grads ≥ cur_threshold`, gaussian_model.py:888), so the demand cells B points at (low gradient → no candidates) could never grow — B changed the *plan* but the actuator dropped B's distinctive part. A `--grow_relax_scale` knob (scales that threshold on the controller growth path only; default 1.0 = unchanged) was added to test "does demand allocation help once the controller can actually move?". Two findings on amsterdam (seed 0):
+
+- **Controllability unlocked → promote.** With `--grow_relax_scale 0.1` the controller fills **99.7%** of `B_total` (1,100,846 / 1,104,448), up from ~73%. The set-point is now *hittable*, so the controllable-budget Pareto mainline is feasible and the §3 undershoot is **resolved**, not merely sidestepped.
+- **B refuted as a quality / far-view lever → demote.** A+B vs A-only, both relaxed, matched budget: overall PSNR is a **tie** (28.398 vs 28.332; +0.066 dB = noise). A near/far view split (`eval_view_split.py`) shows B's entire tiny edge comes from **near** views (+0.141) while **far** views — B's §4.1 home turf — are flat-to-worse (**−0.017**). That is the *opposite* of the Tertiary thesis, and it holds on the **train** set (B's best case, where it actually placed the capacity). With the probe (B only ~60% rank-independent, moderate) and the overall tie, three independent signals converge: **B is not a quality lever.** Per the §4.1 fallback + ADR-0002, B is **demoted to a validation-only diagnostic / documented negative result; the system ships A-only.** Confidence caveat: `n = 1` scene/seed/train — a held-out-test confirmation is still owed for the paper's negative result, but it cannot flip red→green.
+
+Net effect on the tiers below: **Primary and the efficiency story carry the paper**; the relax work feeds that surviving mainline. The B-dependent **Tertiary is retired to a negative result**, and the **Secondary** demand-vs-uniform claim is now an *open, A-only* question (does gradient-demand allocation beat uniform at low budgets?), no longer relying on B.
+
 ## 2. Claims (tiered by load-bearing importance)
 
 **Primary — controllable, training-side budget with a unified train/render decision (capability / moat, not a superiority claim).** A single Capacity Budget governs the *training-time* anchor population — demand-driven reallocation across Control Cells under `B_total` — and that same LOD-structured population is what the renderer activates per view. The budget therefore drives **both ends through the shared octree anchor structure**: training shapes which anchors exist (and at which level), rendering activates a distance-subset of exactly that population. This closes the proposal's "information gap" (训练-渲染一体化) *structurally* — one demand-shaped, budget-bounded anchor population serves both. Sweeping `B_total` traces a **training-side** quality–cost Pareto front (the model is *built for* each budget, not pruned after). The novelty is the combination — octree LOD structure **+** an explicit budget set-point **+** demand-driven spatial distribution during training — which no single prior method offers: 3DGS-MCMC has a global count cap but no LOD structure and no spatial demand allocation; Octree-GS has LOD but no budget set-point; CDC-GS / Taming target other axes; and post-hoc render-time budgeting (OCB-3DGS-HR M3) only degrades a fixed model.
 
-**Secondary — demand dominates uniform, especially at low budgets (graceful-degradation dominance).** At matched *achieved* budget, demand-driven allocation (A = gradient, B = photometric, fused additively) lies on or above the uniform-allocation curve (uniform = Octree-GS's own spatial distribution). The expected and most defensible form of this is **at the low-budget end**: as the budget shrinks, demand keeps capacity in the regions that need it (far/detail) while uniform lets them collapse — so our curve stays up where uniform falls off. This is the operational meaning of "better where it matters": not beating a full baseline, but *degrading more gracefully* because the surviving budget is spent where error is. It is a *relative* claim against our own uniform control; it only needs to hold, not to dominate everywhere.
+**Secondary — gradient-demand allocation dominates uniform, especially at low budgets (graceful-degradation dominance). OPEN.** At matched *achieved* budget, A-only (gradient) demand allocation should lie on or above the uniform-allocation curve (uniform = Octree-GS's own spatial distribution), most defensibly **at the low-budget end**: as the budget shrinks, demand keeps capacity where reconstruction error is while uniform lets it collapse — so our curve stays up where uniform falls off. This is "better where it matters" framed as *graceful degradation*, not beating a full baseline. It is a *relative* claim against our own uniform control; it only needs to hold, not dominate everywhere. **Status: untested at low budgets.** Note the matched-budget tie at 1× (§update) says nothing about the low-budget end — at 1× there is little to reallocate; leverage is expected to grow as the budget tightens. If this also turns out flat, the paper still stands on Primary (controllable budget + unification) + efficiency.
 
-**Tertiary — B is a targeted corrector of A's blind spot.** Source B surfaces under-fit fine/distant regions that the screen-space gradient proxy A systematically under-weights (2026-06-19 spec §4.1: A carries a screen-space scale bias against small-footprint regions). Shown on a near/far test-view split: A+B ≥ A-only on far/detail views, with near views unchanged.
+**Tertiary — RETIRED to a negative result (was: B is a targeted corrector of A's blind spot).** The hypothesis was that Source B surfaces under-fit fine/distant regions A's screen-space gradient under-weights (2026-06-19 spec §4.1), and would beat A-only on a far-view split. **Tested and refuted** (see the 2026-06-27 update above): at matched budget A+B ties A-only overall (+0.066 dB) and is flat-to-worse on the far views it was meant to help (−0.017), with its only gain on near views — the opposite of the thesis. B is demoted to a validation-only diagnostic (ADR-0002) and reported as an honest negative result; the system ships **A-only**. The paper does not rely on this claim.
 
 **Efficiency reporting (rides on existing machinery).** FPS, active (opacity-masked) Gaussian count, training time — largely inherited from the Octree-GS LoD renderer; measured and reported against the maintain-quality bar, not engineered anew.
 
 **Continuity (stretch).** CLoD-GS continuous opacity decay composed with reallocation, evaluated by flicker score / temporal LPIPS. This is the only tier that requires *new* rendering-side code beyond Octree-GS's native LoD renderer; it is explicitly out of the graduation-critical path.
 
-### Probe evidence already in hand (grounds the Secondary/Tertiary claims)
+### Probe evidence (characterises B; was the basis for the now-retired Tertiary)
 
 A per-Control-Cell instrumentation of `d_A` and `d_B` at the controller's real operating window (BungeeNeRF, iters 7000–11000, converged regime) established:
 
@@ -42,9 +51,12 @@ This refutes the earlier worry that B might be degenerate, and sizes the leverag
 
 *Caveat carried into the spec:* the "B is more independent in larger scenes" reading (rome 185k cells, Spearman 0.577 lowest) is **not** yet a defensible trend — `n = 3`, and the naive `argsort` rank used in the probe is not tie-corrected, so more zero-`d_A` cells in large scenes can mechanically depress the correlation. Treat as suggestive; do not headline without a tie-corrected re-measure on more scenes.
 
-## 3. Why the 73% undershoot is no longer a blocker
+## 3. The 73% undershoot — now resolved
 
-The Pareto curve is plotted on **achieved** budget, not the set-point. Sweeping `B_total` and recording where occupancy actually lands gives a valid curve regardless of undershoot — a 73%-of-set-point operating point is simply a point further left on the x-axis. The matched-budget claim was the *only* consumer of "hit `B_total` exactly"; with it retired, **no force-fill is required**, and the design returns to full consistency with ADR-0003/0004/0005. Fixing the undershoot becomes an *optional* lever (it would let us place curve points at chosen budgets rather than wherever they fall), not a prerequisite.
+Two independent reasons it is no longer a blocker:
+
+1. **Plotting on achieved budget never needed it.** The Pareto curve is plotted on *achieved* budget; a 73%-of-set-point run is simply a point further left on the x-axis. The matched-budget claim was the only consumer of "hit `B_total` exactly"; with it retired, no force-fill is required and the design stays consistent with ADR-0003/0004/0005.
+2. **It is now actually fixed (2026-06-27).** `--grow_relax_scale 0.1` lets the controller's growth path spawn candidates below the native gradient threshold, so the controller fills **99.7%** of `B_total`. The set-point is hittable, which upgrades the Primary claim from "traces *a* curve" to "traces a *controllable* curve at chosen budgets." The relax knob is an experimental switch today; promoting it into the method (a principled candidate-relaxation in demand cells, distinct from the retired force-fill-to-match-budget) is a graduation-core cleanup, since hitting the set-point *is* the controllability capability.
 
 ## 4. Experiments
 
@@ -56,9 +68,9 @@ Baselines (from eval-plan §1, unchanged): Vanilla 3DGS (capacity-agnostic refer
 
 **Exp A3 — Unification demonstration (训练-渲染一体化, graduation-core).** Show that one budget governs both ends through the shared anchor population: (i) the budget-shaped training population is exactly what the renderer LoD-activates (no separate render-side budget needed); (ii) report, on that same population, the render-side efficiency (FPS, active-Gaussian count) alongside the training-side quality — establishing that the single `B_total` knob moves training cost, model size, render speed, and quality together. The *stretch* form — `B_v` driving an explicit per-voxel render-time activation quota beyond Octree-GS's distance default, composed with CLoD — is Exp D.
 
-**Exp B — near/far view split (B's targeted value).** Partition test cameras by distance (or by per-view mean depth). Compare A+B vs A-only PSNR on the far/detail subset. Success: A+B ≥ A-only on far views, near views unchanged.
+**Exp B — near/far view split (B's targeted value). DONE — negative.** `eval_view_split.py` partitions views by camera distance and reads the existing per-view metrics. On amsterdam (seed 0, train split) A+B vs A-only far-view ΔPSNR = **−0.017** (gain was near-only, +0.141). B does not help the far views it was meant to. Owed for the paper: a held-out-**test** confirmation (render from the saved checkpoints with `--eval` + `metrics.py`, no retrain) to publication-grade the negative result. This experiment now serves the negative result, not a positive claim.
 
-**Exp C — efficiency by-product.** Training time, FPS, active-Gaussian count, and the **A+B vs A-only training-time delta** (B's `2·|camlist|`-render cost must be shown, not hidden). This is the deciding datum for the ADR-0002 Source-B fallback: if B's quality gain does not justify its render cost, B is demoted to a validation-only diagnostic and the system ships A-only.
+**Exp C — efficiency by-product.** Training time, FPS, active-Gaussian count for the shipped **A-only** system, reported against the maintain-quality bar. The **A+B vs A-only training-time delta** (B's `2·|camlist|`-render cost) is reported as part of the negative result: B costs extra render time for no quality gain — the ADR-0002 fallback has **fired** (B demoted), so the shipped system is A-only.
 
 **Exp D — continuity (stretch).** Reallocation composed with CLoD-GS continuous opacity decay; flicker score / temporal LPIPS vs discrete LoD switching. Out of the graduation-critical path.
 
@@ -69,10 +81,10 @@ Baselines (from eval-plan §1, unchanged): Vanilla 3DGS (capacity-agnostic refer
 Aligned to the proposal's maintain-quality framing, not to beating a baseline:
 
 - **Primary (capability + unification):** a coherent **training-side** Pareto curve exists and is controllable via `B_total`; at a chosen operating point quality is within **≤ 0.5 dB PSNR** of full Octree-GS while active Gaussians are materially lower; and the single budget is shown to move training cost / model size / FPS / quality together on one shared anchor population (Exp A3). Load-bearing graduation result; depends only on the controller running and the sweep + efficiency measurement completing — not on any comparative win.
-- **Secondary:** demand curve ≥ uniform curve, with the bar at the **low-budget end** (graceful-degradation dominance — demand keeps far/detail alive where uniform collapses). Moderate effect expected.
+- **Secondary (OPEN, A-only):** the gradient-demand curve ≥ uniform curve, bar at the **low-budget end** (graceful-degradation dominance). Untested; the 1× matched-budget tie does not bear on it. Moderate effect hoped, not required.
 - **Secondary′:** training-under-budget curve (Exp A) ≥ render-time post-hoc curve (Exp A2) at equal achieved budget. High prior probability (training redistributes; post-hoc only subtracts).
-- **Tertiary:** A+B ≥ A-only on far views.
-- A failure of Secondary / Secondary′ / Tertiary does **not** sink the paper: the Primary capability + unification + efficiency + the honest B-leverage characterisation still constitute a defensible contribution (and trigger the ADR-0002 A-only fallback for B).
+- **~~Tertiary: A+B ≥ A-only on far views.~~ FAILED (2026-06-27):** far-view ΔPSNR = −0.017 on amsterdam; B demoted to diagnostic / negative result, system ships A-only.
+- A failure of Secondary / Secondary′ does **not** sink the paper: the Primary capability + unification + efficiency constitute the defensible contribution on their own; the Tertiary failure is already absorbed (B demoted, A-only shipped).
 
 ## 6. Relationship to existing docs (consistency map)
 
@@ -80,14 +92,14 @@ Aligned to the proposal's maintain-quality framing, not to beating a baseline:
 - **Preserves unchanged** the no-force-fill invariant and all of ADR-0003/0004/0005 — now fully consistent, since the only clause that required force-fill is gone.
 - **Adds** the near/far view-split evaluation (eval-plan §5 currently has only the capacity heatmap).
 - **Keeps** `CONTEXT.md` as-is — its "honest slack, not padded with low-value anchors" already encodes the natural-budget stance.
-- **Maps to the proposal:** Primary claim = proposal 创新点一 (unified voxel budget) + 主要问题五 (controllable trade-off / Pareto); Tertiary = proposal's Source-B / §4.1 screen-space blind-spot correction. The proposal needs no change — it already asks for maintain-quality + controllable budget.
+- **Maps to the proposal:** Primary claim = proposal 创新点一 (unified voxel budget) + 主要问题五 (controllable trade-off / Pareto). The proposal needs no change — it already asks for maintain-quality + controllable budget, neither of which depends on B. Source B / the §4.1 screen-space blind-spot correction (proposal's refinement signal) becomes a *tested negative result*, not a headline contribution.
 - Old spec is retained (not deleted); a pointer to this document is added at its top.
 
 ## 7. Risks & fallbacks
 
-- 🟡 **Demand may only tie uniform** (Secondary). Mitigated: capability + efficiency + far-view B carry the paper; tie is reported honestly.
-- 🟡 **B may not justify its render cost** (Tertiary/Exp C). Mitigated: ADR-0002 fallback — demote B to validation-only diagnostic, ship A-only; the architecture already anticipates this.
-- 🟡 **Rendering-side build cost** (Exp D continuity, and the explicit per-voxel render quota). Mitigated: both are stretch/out-of-critical-path; the graduation core (Exp A/A2/A3/B/C) rides on existing OcbGS code + Octree-GS's native LoD renderer.
+- ✅ **B as a quality lever — RESOLVED (negative).** Tested and refuted (far ΔPSNR −0.017); B demoted to diagnostic, A-only shipped (ADR-0002 fallback fired). No longer a risk, now a documented result. Owed: held-out-test confirmation for paper-grade rigor.
+- 🟡 **Gradient-demand may only tie uniform at low budgets** (Secondary). Mitigated: Primary (controllable budget + unification) + efficiency carry the paper without it; tie reported honestly.
+- 🟡 **Rendering-side build cost** (Exp D continuity, and the explicit per-voxel render quota). Mitigated: both are stretch/out-of-critical-path; the graduation core (Exp A/A2/A3/C) rides on existing OcbGS code + Octree-GS's native LoD renderer.
 - 🟢 **rome "scaling with complexity" over-claim** — guarded in §2; not to be headlined without a tie-corrected re-measure.
 
 ## 8. Scope
