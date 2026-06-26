@@ -18,7 +18,6 @@
 import os
 import json
 import numpy as np
-import torch
 from argparse import ArgumentParser
 
 from scene import Scene
@@ -98,7 +97,7 @@ def main():
     print(header)
     print("-" * len(header))
     for metric in ("PSNR", "SSIM", "LPIPS"):
-        vmap, method = load_per_view_metric(model_path, metric)
+        vmap, _ = load_per_view_metric(model_path, metric)
         all_v, _ = group_mean(vmap, all_idx)
         near_v, _ = group_mean(vmap, near_idx)
         far_v, _ = group_mean(vmap, far_idx)
