@@ -49,6 +49,10 @@ Run only tests that carry no risk of environment conflict — e.g. pure-logic un
 
 After finishing a piece of code, self-review it once first — check for correctness, edge cases, and adherence to project conventions — and only then hand it to the user for review.
 
+### Experiment workflow (knob tuning — fast inner loop, slow outer loop)
+
+Do NOT tune knobs (e.g. `--grow_relax_scale`, `k_cap`, `rate_limit`) with full-length training runs. Split the questions: *"did the mechanism move?"* — budget fill ratio (`final anchors / B_total`), allocation change, no-crash/no-OOM — is answerable with a **short smoke** (~3k iters + compressed controller window, e.g. `--iterations 3000 --update_from 500 --update_interval 100 --update_until 3000`) in minutes; the fill ratio is roughly knob-determined and horizon-independent, so the smoke extrapolates to the full run. Only *"is quality better?"* (PSNR/SSIM/LPIPS) needs a full run, and each arm is run **once**, after the knob is locked. Rule: every full run must answer something a smoke cannot (quality); anything about moved/filled/allocation goes to a smoke.
+
 ### Acceptance criteria
 
 Each issue's acceptance criteria must be checked item by item before the issue can be marked as passed. When closing an issue, set its **Status:** to DONE.
