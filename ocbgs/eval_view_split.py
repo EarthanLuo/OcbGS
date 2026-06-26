@@ -26,9 +26,14 @@ from arguments import ModelParams, PipelineParams, get_combined_args
 from utils.general_utils import safe_state
 
 
-def test_camera_centers(dataset, iteration):
-    """Load the scene's test cameras (same order render.py saved PNGs) and return
-    their world-space centres as an [N,3] numpy array."""
+def split_camera_centers(dataset, iteration, split):
+    """Load the cameras of the requested split in the SAME order train.py/render.py
+    saved the PNGs, and return their world-space centres as an [N,3] numpy array.
+
+    train.py renders + evaluates the TRAIN split when eval=False and the TEST split
+    when eval=True (train.py:594-603). per_view.json is keyed 00000.png.. in that
+    split's camera order, so split here must match how the run was evaluated."""
+    dataset.eval = (split == "test")
     gaussians = GaussianModel(
         dataset.feat_dim, dataset.n_offsets, dataset.fork, dataset.use_feat_bank, dataset.appearance_dim,
         dataset.add_opacity_dist, dataset.add_cov_dist, dataset.add_color_dist, dataset.add_level,
@@ -36,7 +41,7 @@ def test_camera_centers(dataset, iteration):
     )
     scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False,
                   resolution_scales=dataset.resolution_scales)
-    cams = scene.getTestCameras()
+    cams = scene.getTestCameras() if split == "test" else scene.getTrainCameras()
     centers = np.stack([c.camera_center.detach().cpu().numpy() for c in cams], axis=0)
     return centers, scene.loaded_iter
 
@@ -67,6 +72,9 @@ def main():
     parser.add_argument("--far_frac", default=0.5, type=float,
                         help="fraction of farthest views in the FAR group "
                              "(0.5 = median split; 0.33 = farthest third vs nearest third)")
+    parser.add_argument("--split", default="train", choices=["train", "test"],
+                        help="which split per_view.json holds — runs with --eval evaluate "
+                             "'test', runs without evaluate 'train' (train.py:594-603)")
     parser.add_argument("--quiet", action="store_true")
     args = get_combined_args(parser)
     safe_state(args.quiet)
@@ -74,15 +82,19 @@ def main():
     dataset = model.extract(args)
     model_path = dataset.model_path
 
-    # The COLMAP reader builds the test split only when eval=True (every 8th cam,
-    # sorted by image_name -> dataset_readers.py:312-317). The trained run rendered
-    # its test set the same way, so force eval=True here to reproduce that exact
-    # 161-view split in the same order the renders/per_view.json were saved.
-    dataset.eval = True
+    centers, loaded_iter = split_camera_centers(dataset, args.iteration, args.split)
 
-    centers, loaded_iter = test_camera_centers(dataset, args.iteration)
-    if len(centers) == 0:
-        raise RuntimeError("no test cameras after forcing eval=True — check --ds / source_path")
+    # Hard guard: the camera list MUST match per_view.json one-to-one, or the
+    # index->camera->distance pairing is garbage (this silently produced wrong
+    # numbers before the guard existed). The 'all' column reproducing the headline
+    # PSNR is the second, independent check.
+    psnr_map, _ = load_per_view_metric(model_path, "PSNR")
+    if len(centers) != len(psnr_map):
+        raise RuntimeError(
+            f"camera/per_view mismatch: --split {args.split} gives {len(centers)} cameras "
+            f"but per_view.json has {len(psnr_map)} views. The run was evaluated on the OTHER "
+            f"split — re-run with --split {'test' if args.split=='train' else 'train'}, or "
+            f"regenerate per_view.json for this split.")
     scene_center = centers.mean(axis=0)
     dists = np.linalg.norm(centers - scene_center, axis=1)
     order = np.argsort(dists)  # ascending: near -> far
