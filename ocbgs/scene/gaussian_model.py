@@ -443,7 +443,11 @@ class GaussianModel:
             voxel_size=self.voxel_size, fork=self.fork,
             levels=self.levels, init_pos=self.init_pos)
         self.controller = build_controller(training_args)
-        
+        # Experimental knob: scales the controller-path candidate-generation
+        # threshold so demand cells (esp. B-favored low-gradient cells) can spawn
+        # candidates. 1.0 = native gating (no change). See .scratch/EXP-actuator-relax.md
+        self.grow_relax_scale = getattr(training_args, 'grow_relax_scale', 1.0)
+
         l = [
             {'params': [self._anchor], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "anchor"},
             {'params': [self._offset], 'lr': training_args.offset_lr_init * self.spatial_lr_scale, "name": "offset"},
@@ -1059,8 +1063,14 @@ class GaussianModel:
         self._extra_level = torch.cat([self._extra_level, new_extra_level], dim=0)
 
     def anchor_growing_capped(self, plan, iteration, grads, threshold, update_ratio, extra_ratio, extra_up, offset_mask):
+        # Experimental: relax the candidate-generation threshold on the controller
+        # growth path so demand cells (esp. B-favored low-gradient cells) can spawn
+        # candidates the plan can grow into. relax=1.0 -> identical native gating;
+        # relax<1 floods more candidates so the controller can finally MOVE budget
+        # toward where demand (incl. B) points. See .scratch/EXP-actuator-relax.md
+        relax = getattr(self, 'grow_relax_scale', 1.0)
         candidates, new_level, new_extra_level, candidate_grads = self._anchor_growing_gather(
-            iteration, grads, threshold, update_ratio, extra_ratio, extra_up, offset_mask)
+            iteration, grads, threshold * relax, update_ratio, extra_ratio, extra_up, offset_mask)
 
         new_anchor = candidates["anchor"]
         if new_anchor.shape[0] == 0:

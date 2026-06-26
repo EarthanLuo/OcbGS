@@ -174,6 +174,7 @@ class OptimizationParams(ParamGroup):
         self.k_cap = 8
         self.rate_limit = 0.05
         self.tau_smooth = 3
+        self.grow_relax_scale = 1.0
 
         super().__init__(parser, "Optimization Parameters")
         parser.add_argument("--no_controller", dest="controller_enabled", action="store_false",
