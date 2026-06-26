@@ -74,7 +74,15 @@ def main():
     dataset = model.extract(args)
     model_path = dataset.model_path
 
+    # The COLMAP reader builds the test split only when eval=True (every 8th cam,
+    # sorted by image_name -> dataset_readers.py:312-317). The trained run rendered
+    # its test set the same way, so force eval=True here to reproduce that exact
+    # 161-view split in the same order the renders/per_view.json were saved.
+    dataset.eval = True
+
     centers, loaded_iter = test_camera_centers(dataset, args.iteration)
+    if len(centers) == 0:
+        raise RuntimeError("no test cameras after forcing eval=True — check --ds / source_path")
     scene_center = centers.mean(axis=0)
     dists = np.linalg.norm(centers - scene_center, axis=1)
     order = np.argsort(dists)  # ascending: near -> far
