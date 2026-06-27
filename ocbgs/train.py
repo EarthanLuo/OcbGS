@@ -205,6 +205,11 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
                             amort_pct = (b_ms / (period * step_ms) * 100) if (period > 0 and step_ms > 0) else 0.0
                             logger.info(f"[SOURCE_B] iteration={iteration} render_ms={b_ms:.1f} "
                                         f"step_fwdbwd_ms={step_ms:.1f} amortized_pct={amort_pct:.2f}%")
+                    if os.environ.get('OCBGS_PROFILE_ADJUST') == '1':
+                        # Pairs with [PROFILE_ADJUST]: lets us compare one
+                        # adjust_anchor's cost against a single fwd+bwd step.
+                        print(f"[PROFILE_STEP] iteration={iteration} "
+                              f"fwdbwd_ms={iter_start.elapsed_time(iter_end):.1f}", flush=True)
             elif iteration == opt.update_until:
                 if (getattr(opt, 'controller_enabled', False)
                         and gaussians.controller is not None):

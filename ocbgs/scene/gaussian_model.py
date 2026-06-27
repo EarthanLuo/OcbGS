@@ -1288,6 +1288,16 @@ class GaussianModel:
             self.controller.reset()
             self._control_level_set = True
 
+        # Phase timing: OCBGS_PROFILE_ADJUST=1 prints a per-phase ms breakdown of
+        # adjust_anchor (cuda-synced). Off by default → zero overhead on sweeps.
+        _profile = os.environ.get('OCBGS_PROFILE_ADJUST') == '1'
+        def _mark():
+            if _profile:
+                torch.cuda.synchronize()
+                return time.perf_counter()
+            return 0.0
+        _t0 = _mark()
+
         maturity_min = check_interval * success_threshold
         GC_mask = self._opacity_dead_mask(self.opacity_accum, self.anchor_demon,
                                            min_opacity, maturity_min)
@@ -1298,11 +1308,13 @@ class GaussianModel:
             KEY_OFFSET_DENOM: self.offset_denom,
         }
         s_a = self.demand_producer.produce(self, stats)
+        _t_produce = _mark()
 
         positions = self.get_anchor
         ones = torch.ones(positions.shape[0], dtype=torch.long, device=positions.device)
         cids, n = self.partition.reduce(positions, ones, exclude=GC_mask)
         cids, d_a = self.partition.reduce(positions, s_a, exclude=GC_mask)
+        _t_reduce = _mark()
 
         self._b_step += 1
         d_b_cache, render_ms = evaluate_source_b(
@@ -1310,10 +1322,12 @@ class GaussianModel:
             self.demand_b, self.partition, self._b_cfg)
         d_b = align_demand_b(cids, d_b_cache) if d_b_cache is not None else None
         self._last_b_render_ms = render_ms
+        _t_b = _mark()
 
         d_a_eff = resolve_controller_demand(d_a, self.demand_uniform)
         plan = self.controller.plan(cell_ids=cids, d_A=d_a_eff, occupancy=n,
                                      B_total=self.B_total, d_B=d_b)
+        _t_plan = _mark()
 
         anchor_cell_ids = self.partition.cell_id(positions)
 
@@ -1335,6 +1349,7 @@ class GaussianModel:
 
         if prune_mask.any():
             self.prune_anchor(prune_mask)
+        _t_prune = _mark()
 
         grads = self.offset_gradient_accum / self.offset_denom
         grads[grads.isnan()] = 0.0
@@ -1343,6 +1358,18 @@ class GaussianModel:
 
         self.anchor_growing_capped(plan, iteration, grads_norm, grad_threshold,
                                     update_ratio, extra_ratio, extra_up, offset_mask)
+        _t_grow = _mark()
+
+        if _profile:
+            C = cids.shape[0]
+            print(f"[PROFILE_ADJUST] iter={iteration} C={C} N_anchor={positions.shape[0]} | "
+                  f"produce={ (_t_produce-_t0)*1e3:.1f} "
+                  f"reduce={ (_t_reduce-_t_produce)*1e3:.1f} "
+                  f"source_b={ (_t_b-_t_reduce)*1e3:.1f} "
+                  f"plan={ (_t_plan-_t_b)*1e3:.1f} "
+                  f"prune={ (_t_prune-_t_plan)*1e3:.1f} "
+                  f"grow={ (_t_grow-_t_prune)*1e3:.1f} "
+                  f"TOTAL={ (_t_grow-_t0)*1e3:.1f} ms", flush=True)
 
         self.offset_denom[offset_mask] = 0
         N_new = self.get_anchor.shape[0] * self.n_offsets
