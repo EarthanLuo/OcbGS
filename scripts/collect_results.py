@@ -384,6 +384,82 @@ def cmd_table(args):
 
 
 # ---------------------------------------------------------------------------
+# Subcommand: pareto
+# ---------------------------------------------------------------------------
+
+def aggregate_pareto_points(raw):
+    """Collapse per-(arm,factor) seed lists into one Pareto row each.
+
+    raw: list of {arm, factor, anchors:[int], metrics:[{PSNR,SSIM,LPIPS}]}.
+    Returns rows {arm, factor, anchors_mean, PSNR_mean, SSIM_mean, LPIPS_mean, n}
+    sorted by (arm, anchors_mean). Points with no anchors or no metrics are
+    dropped (an infeasible / missing factor).
+    """
+    rows = []
+    for pt in raw:
+        anchors = pt.get("anchors") or []
+        metrics = pt.get("metrics") or []
+        if not anchors or not metrics:
+            continue
+        row = {
+            "arm": pt["arm"],
+            "factor": pt["factor"],
+            "anchors_mean": statistics.mean(anchors),
+            "n": len(metrics),
+        }
+        for m in ("PSNR", "SSIM", "LPIPS"):
+            row[f"{m}_mean"] = statistics.mean(d[m] for d in metrics)
+        rows.append(row)
+    rows.sort(key=lambda r: (r["arm"], r["anchors_mean"]))
+    return rows
+
+
+def cmd_pareto(args):
+    raw = []
+    for arm in args.arms:
+        for factor in args.factors:
+            label = f"{factor:g}x"
+            armdir = os.path.join(args.root, arm, f"arm_{label}")
+            seeds = _seed_dirs(os.path.join(armdir, "seed_*"))
+            anchors, metrics = [], []
+            for sd in seeds:
+                events_dir = _find_events_dir(sd)
+                if events_dir is not None:
+                    ea = EventAccumulator(events_dir)
+                    ea.Reload()
+                    tag = _find_total_points_tag(ea.Tags().get("scalars", []))
+                    if tag is not None:
+                        v = _read_total_points_at_step(events_dir, tag, args.step)
+                        if v is not None:
+                            anchors.append(int(v))
+                rp = os.path.join(sd, "results.json")
+                if os.path.exists(rp):
+                    data = _read_results_json(rp)
+                    key = f"ours_{args.checkpoint}"
+                    if key in data:
+                        m = data[key]
+                        metrics.append({"PSNR": m["PSNR"], "SSIM": m["SSIM"],
+                                        "LPIPS": m["LPIPS"]})
+            raw.append({"arm": arm, "factor": factor,
+                        "anchors": anchors, "metrics": metrics})
+
+    rows = aggregate_pareto_points(raw)
+    header = "arm,factor,anchors,PSNR,SSIM,LPIPS,n"
+    lines = [header]
+    print(header)
+    for r in rows:
+        line = (f"{r['arm']},{r['factor']:g},{r['anchors_mean']:.0f},"
+                f"{r['PSNR_mean']:.4f},{r['SSIM_mean']:.4f},"
+                f"{r['LPIPS_mean']:.4f},{r['n']}")
+        lines.append(line)
+        print(line)
+    if args.output:
+        with open(args.output, "w") as f:
+            f.write("\n".join(lines) + "\n")
+        print(f"\nWrote {args.output}")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -420,6 +496,15 @@ def main():
     p_t.add_argument("--metrics", nargs="+", default=["PSNR", "SSIM", "LPIPS"],
                      help="Metrics to tabulate (default: PSNR SSIM LPIPS)")
 
+    # pareto
+    p_p = sub.add_parser("pareto", help="Join achieved anchors (x) with quality (y) per arm/factor")
+    p_p.add_argument("--root", required=True, help="Sweep root: <root>/<arm>/arm_<factor>x/seed_*")
+    p_p.add_argument("--arms", nargs="+", required=True, help="Arm names (e.g. demand uniform)")
+    p_p.add_argument("--factors", type=float, nargs="+", required=True, help="Budget factors")
+    p_p.add_argument("--step", type=int, required=True, help="total_points step (update_until)")
+    p_p.add_argument("--checkpoint", type=int, required=True, help="metrics checkpoint (e.g. 30000)")
+    p_p.add_argument("--output", default=None, help="Write CSV")
+
     args = parser.parse_args()
     if args.command == "total_points":
         cmd_total_points(args)
@@ -429,6 +514,8 @@ def main():
         cmd_compare(args)
     elif args.command == "table":
         cmd_table(args)
+    elif args.command == "pareto":
+        cmd_pareto(args)
     else:
         parser.print_help()
 
