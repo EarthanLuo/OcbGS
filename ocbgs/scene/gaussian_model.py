@@ -31,6 +31,7 @@ from demand.source_b import evaluate_source_b
 from demand import PhotometricDemand
 from partition import build_partition
 from controller import build_controller, align_demand_b, resolve_controller_demand
+from scene.anchor_ops import cap_keep_mask
     
 class GaussianModel:
 
@@ -826,30 +827,11 @@ class GaussianModel:
 
     @staticmethod
     def _cap_keep_mask(cell_ids, candidate_grads, plan_cell_ids, plan_delta):
-        N = cell_ids.shape[0]
-        device = cell_ids.device
-        keep_mask = torch.zeros(N, dtype=torch.bool, device=device)
-
-        for i in range(plan_cell_ids.shape[0]):
-            cid = plan_cell_ids[i].item()
-            delta = plan_delta[i].item()
-            if delta <= 0:
-                continue
-
-            in_cell = (cell_ids == cid)
-            n_cand = int(in_cell.sum().item())
-            if n_cand == 0:
-                continue
-            k = min(int(delta), n_cand)
-            if k <= 0:
-                continue
-
-            g_in_cell = candidate_grads[in_cell]
-            _, topk = torch.topk(g_in_cell, k, largest=True)
-            cell_indices = torch.where(in_cell)[0]
-            keep_mask[cell_indices[topk]] = True
-
-        return keep_mask
+        # Vectorized in scene/anchor_ops.py — the original O(C) Python loop
+        # (per-cell .item()/scan/top-k over C≈85k cells) was the dominant cost
+        # of adjust_anchor under relax. Equivalence covered by
+        # tests/test_cap_keep_mask_vectorized.py.
+        return cap_keep_mask(cell_ids, candidate_grads, plan_cell_ids, plan_delta)
 
     def get_remove_duplicates(self, grid_coords, selected_grid_coords_unique, use_chunk = True):
         if use_chunk:
