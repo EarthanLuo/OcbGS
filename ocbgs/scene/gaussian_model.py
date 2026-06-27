@@ -869,6 +869,17 @@ class GaussianModel:
         grads[~offset_mask] = 0.0
         anchor_grads = torch.sum(grads.reshape(-1, self.n_offsets), dim=-1) / (torch.sum(offset_mask.reshape(-1, self.n_offsets), dim=-1) + 1e-6)
 
+        # Sub-phase timing inside grow (OCBGS_PROFILE_ADJUST=1): isolates the two
+        # O(big) suspects — get_remove_duplicates (N_unique×N_grid) and weed_out
+        # (N_cam×N_candidate) — accumulated across the level loop.
+        _gprof = os.environ.get('OCBGS_PROFILE_ADJUST') == '1'
+        _gacc = {'unique': 0.0, 'remove_dup': 0.0, 'weed': 0.0, 'n_cand': 0}
+        def _gt():
+            if _gprof:
+                torch.cuda.synchronize()
+                return time.perf_counter()
+            return 0.0
+
         anchors_list = []
         levels_list = []
         feats_list = []
@@ -911,9 +922,14 @@ class GaussianModel:
             grid_coords = torch.round((self.get_anchor[level_mask]-self.init_pos)/cur_size).int()
             selected_xyz = all_xyz.view([-1, 3])[candidate_mask]
             selected_grid_coords = torch.round((selected_xyz-self.init_pos)/cur_size).int()
+            _a = _gt()
             selected_grid_coords_unique, inverse_indices = torch.unique(selected_grid_coords, return_inverse=True, dim=0)
+            _gacc['unique'] += _gt() - _a
+            _gacc['n_cand'] += selected_grid_coords_unique.shape[0]
             if selected_grid_coords_unique.shape[0] > 0 and grid_coords.shape[0] > 0:
+                _a = _gt()
                 remove_duplicates = self.get_remove_duplicates(grid_coords, selected_grid_coords_unique)
+                _gacc['remove_dup'] += _gt() - _a
                 remove_duplicates = ~remove_duplicates
                 candidate_anchor = selected_grid_coords_unique[remove_duplicates]*cur_size+self.init_pos
                 new_level = torch.ones(candidate_anchor.shape[0], dtype=torch.int, device='cuda') * cur_level
@@ -923,7 +939,9 @@ class GaussianModel:
                                                         inverse_indices, dim=0)[0].squeeze(-1)
                 candidate_grads_keep = candidate_grads_per_coord[remove_duplicates]
 
+                _a = _gt()
                 candidate_anchor, new_level, _, weed_mask = self.weed_out(candidate_anchor, new_level)
+                _gacc['weed'] += _gt() - _a
                 remove_duplicates_clone = remove_duplicates.clone()
                 remove_duplicates[remove_duplicates_clone] = weed_mask
                 candidate_grads_keep = candidate_grads_keep[weed_mask]
@@ -941,9 +959,14 @@ class GaussianModel:
                 grid_coords_ds = torch.round((self.get_anchor[level_ds_mask]-self.init_pos)/ds_size).int()
                 selected_xyz_ds = all_xyz.view([-1, 3])[candidate_ds_mask]
                 selected_grid_coords_ds = torch.round((selected_xyz_ds-self.init_pos)/ds_size).int()
+                _a = _gt()
                 selected_grid_coords_unique_ds, inverse_indices_ds = torch.unique(selected_grid_coords_ds, return_inverse=True, dim=0)
+                _gacc['unique'] += _gt() - _a
+                _gacc['n_cand'] += selected_grid_coords_unique_ds.shape[0]
                 if selected_grid_coords_unique_ds.shape[0] > 0 and grid_coords_ds.shape[0] > 0:
+                    _a = _gt()
                     remove_duplicates_ds = self.get_remove_duplicates(grid_coords_ds, selected_grid_coords_unique_ds)
+                    _gacc['remove_dup'] += _gt() - _a
                     remove_duplicates_ds = ~remove_duplicates_ds
                     candidate_anchor_ds = selected_grid_coords_unique_ds[remove_duplicates_ds]*ds_size+self.init_pos
                     new_level_ds = torch.ones(candidate_anchor_ds.shape[0], dtype=torch.int, device='cuda') * (cur_level + 1)
@@ -953,7 +976,9 @@ class GaussianModel:
                                                                 inverse_indices_ds, dim=0)[0].squeeze(-1)
                     candidate_grads_ds_keep = candidate_grads_ds_per_coord[remove_duplicates_ds]
 
+                    _a = _gt()
                     candidate_anchor_ds, new_level_ds, _, weed_ds_mask = self.weed_out(candidate_anchor_ds, new_level_ds)
+                    _gacc['weed'] += _gt() - _a
                     remove_duplicates_ds_clone = remove_duplicates_ds.clone()
                     remove_duplicates_ds[remove_duplicates_ds_clone] = weed_ds_mask
                     candidate_grads_ds_keep = candidate_grads_ds_keep[weed_ds_mask]
@@ -1000,6 +1025,12 @@ class GaussianModel:
 
                 cand_grads = torch.cat([candidate_grads_keep, candidate_grads_ds_keep], dim=0)
                 grads_list.append(cand_grads)
+
+        if _gprof:
+            print(f"[PROFILE_GROW] levels={self.levels} cand_unique_total={_gacc['n_cand']} | "
+                  f"unique={_gacc['unique']*1e3:.1f} "
+                  f"remove_dup={_gacc['remove_dup']*1e3:.1f} "
+                  f"weed={_gacc['weed']*1e3:.1f} ms", flush=True)
 
         if len(anchors_list) == 0:
             empty_anchor = torch.zeros([0, 3], dtype=torch.float, device='cuda')
