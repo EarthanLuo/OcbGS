@@ -401,6 +401,19 @@ class TemporalBudgetController(StaticBudgetController):
         return r >= self.spearman_threshold
 
 
+def resolve_controller_demand(d_a, uniform):
+    """Return the demand field fed to the controller.
+
+    When ``uniform`` is True, zero the demand so the controller's
+    ``d_sum<=0 -> B_total/N_active`` branch produces a flat allocation across
+    active cells — the 'uniform' Pareto arm, run under identical machinery as
+    the demand arm. When False, the gradient demand passes through unchanged.
+    """
+    if uniform:
+        return torch.zeros_like(d_a)
+    return d_a
+
+
 def align_demand_b(cell_ids, b_cache):
     return torch.tensor([b_cache.get(int(c), 0.0) for c in cell_ids.tolist()],
                         dtype=torch.float32,

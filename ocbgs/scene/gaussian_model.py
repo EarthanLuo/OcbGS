@@ -30,7 +30,7 @@ from demand import ErrorVisibilityDemand, KEY_ANCHOR_DEMON, KEY_OFFSET_GRADIENT_
 from demand.source_b import evaluate_source_b
 from demand import PhotometricDemand
 from partition import build_partition
-from controller import build_controller, align_demand_b
+from controller import build_controller, align_demand_b, resolve_controller_demand
     
 class GaussianModel:
 
@@ -447,6 +447,7 @@ class GaussianModel:
         # threshold so demand cells (esp. B-favored low-gradient cells) can spawn
         # candidates. 1.0 = native gating (no change). See .scratch/EXP-actuator-relax.md
         self.grow_relax_scale = getattr(training_args, 'grow_relax_scale', 1.0)
+        self.demand_uniform = getattr(training_args, 'demand_uniform', False)
 
         l = [
             {'params': [self._anchor], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "anchor"},
@@ -1310,7 +1311,8 @@ class GaussianModel:
         d_b = align_demand_b(cids, d_b_cache) if d_b_cache is not None else None
         self._last_b_render_ms = render_ms
 
-        plan = self.controller.plan(cell_ids=cids, d_A=d_a, occupancy=n,
+        d_a_eff = resolve_controller_demand(d_a, self.demand_uniform)
+        plan = self.controller.plan(cell_ids=cids, d_A=d_a_eff, occupancy=n,
                                      B_total=self.B_total, d_B=d_b)
 
         anchor_cell_ids = self.partition.cell_id(positions)
