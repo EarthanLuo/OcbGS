@@ -1082,8 +1082,12 @@ class GaussianModel:
         del self.opacity_accum
         self.opacity_accum = temp_opacity_accum
 
-        torch.cuda.empty_cache()
-
+        # NB: no torch.cuda.empty_cache() here. Dumping the caching-allocator
+        # pool right before cat_tensors_to_optimizer's ~18 large allocations
+        # forces each to a slow synchronous cudaMalloc — the dominant cost of
+        # adjust_anchor under relax (363k+ candidates). In a single training
+        # process the freed memory is reused from the pool anyway, so dropping
+        # the call is behaviour-preserving and does not raise OOM risk.
         optimizable_tensors = self.cat_tensors_to_optimizer(d)
         self._anchor = optimizable_tensors["anchor"]
         self._scaling = optimizable_tensors["scaling"]
@@ -1246,8 +1250,10 @@ class GaussianModel:
                 del self.opacity_accum
                 self.opacity_accum = temp_opacity_accum
 
-                torch.cuda.empty_cache()
-                
+                # No empty_cache() here (per-level in the native path = even worse):
+                # it dumps the allocator pool right before cat_tensors_to_optimizer,
+                # forcing slow cudaMalloc. Behaviour-preserving to drop. See the
+                # note in _anchor_growing_register.
                 optimizable_tensors = self.cat_tensors_to_optimizer(d)
                 self._anchor = optimizable_tensors["anchor"]
                 self._scaling = optimizable_tensors["scaling"]
