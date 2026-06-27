@@ -319,18 +319,18 @@ class TemporalBudgetController(StaticBudgetController):
             d_raw = d_A
 
         beta = 1.0 - 1.0 / self.tau_smooth
-        d_smooth = torch.empty(C, dtype=torch.float32, device=device)
-
-        for i in range(C):
-            cid_int = cell_ids[i].item()
-            prev = self._d_smooth_prev.get(cid_int, float(d_raw[i].item()))
-            d_smooth[i] = beta * prev + (1.0 - beta) * float(d_raw[i].item())
+        # Vectorized EMA: two bulk CPU↔GPU transfers instead of C×.item() syncs.
+        cids_list = cell_ids.tolist()
+        d_raw_list = d_raw.tolist()
+        d_prev_list = [self._d_smooth_prev.get(cid, d_raw_list[i])
+                       for i, cid in enumerate(cids_list)]
+        d_prev = torch.tensor(d_prev_list, dtype=torch.float32, device=device)
+        d_smooth = beta * d_prev + (1.0 - beta) * d_raw
 
         N_total = occupancy.sum().item()
-        stable = self._spearman_stable(cell_ids, d_smooth)
+        stable = self._spearman_stable(cids_list, d_smooth)
 
-        self._d_smooth_prev = {cell_ids[i].item(): float(d_smooth[i].item())
-                               for i in range(C)}
+        self._d_smooth_prev = dict(zip(cids_list, d_smooth.tolist()))
         self._d_history.append(self._d_smooth_prev.copy())
 
         if stable:
@@ -358,30 +358,25 @@ class TemporalBudgetController(StaticBudgetController):
 
         return self._allocate(cell_ids, d_smooth, occupancy, B_total, phase=self._phase)
 
-    def _spearman_stable(self, cell_ids, d_smooth):
+    def _spearman_stable(self, cids_list, d_smooth):
         if len(self._d_history) < self.tau_smooth:
             return False
 
         d_past = self._d_history[0]
 
-        current_ids = {cell_ids[i].item() for i in range(cell_ids.shape[0])}
-        past_ids = set(d_past.keys())
-        shared_ids = current_ids & past_ids
+        # cids_list already transferred from GPU by the caller (plan()).
+        shared_ids = set(cids_list) & set(d_past.keys())
 
         if len(shared_ids) < 2:
             return False
 
         shared_sorted = sorted(shared_ids)
-        x_vals = []
-        y_vals = []
+        cid_to_local = {cid: i for i, cid in enumerate(cids_list)}
+        local_indices = [cid_to_local[cid] for cid in shared_sorted]
 
-        cid_to_idx = {cell_ids[i].item(): i for i in range(cell_ids.shape[0])}
-        for cid in shared_sorted:
-            idx = cid_to_idx.get(cid)
-            if idx is None:
-                continue
-            x_vals.append(float(d_smooth[idx].item()))
-            y_vals.append(float(d_past[cid]))
+        # Single bulk transfer for all shared-cell smooth values.
+        x_vals = d_smooth[local_indices].tolist()
+        y_vals = [d_past[cid] for cid in shared_sorted]
 
         if len(x_vals) < 2:
             return False
