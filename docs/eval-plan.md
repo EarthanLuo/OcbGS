@@ -11,7 +11,7 @@ This document expands §6 of the DDBR design spec (`docs/superpowers/specs/2026-
 | CLoD-GS | continuous-LOD comparison |
 | FastGS | training-speed axis (optional) |
 
-The critical comparison is vs Octree-GS at equal #anchors, isolating the demand-reallocation variable.
+The critical comparison is **demand vs uniform allocation at matched achieved #anchors along the Pareto curve**, both run under identical controller machinery (uniform = the `--demand_uniform` flattened-demand arm; native Octree-GS is one reference point). This isolates the demand-reallocation variable without a force-fill matched-budget point.
 
 ## 2. Metrics
 
@@ -25,14 +25,14 @@ The critical comparison is vs Octree-GS at equal #anchors, isolating the demand-
 
 **1 — Main comparison: two operating points, both on the Pareto curve.**
 
-- **Matched-budget:** force equality `Σn ≡ B_total = Octree-GS final #anchors` (plateau off; floor fills the budget). Strictly equal #anchors → "same budget, higher quality."
+- **Matched-budget: RETIRED.** The force-equality / floor-fills-the-budget operating point is withdrawn — it contradicted the no-force-fill invariant (ADR-0003/0004/0005) and was experimentally refuted. The Pareto comparison is made at matched **achieved** #anchors along the swept curve (`docs/superpowers/specs/2026-06-26-controllable-budget-pareto-design.md` §6). See `--demand_uniform` for the uniform control arm.
 - **Natural-budget:** the cap `Σn ≤ B_total` (plateau allowed). #anchors `≤` baseline at higher quality → "less budget, higher quality" (stronger claim; #anchors reported explicitly).
 
 **2 — Money figure: Pareto curve.** Sweep `B_total ∈ {0.25, 0.5, 1, 2}× baseline` → quality. Claim: our curve dominates across budgets.
 
 **3 — Ablations.**
 
-- **Demand source:** uniform (= Octree-GS) / gradient-only (`λ=0`) / gradient + photometric (`λ ∈ {0.5, 1.0}`) / photometric-only. Plus B-cost knobs `|camlist|` and `M` (cost–quality trade-off — see Exp 4).
+- **Demand source:** uniform (= the `--demand_uniform` flattened-demand controller arm; matches Octree-GS's spatial distribution) / gradient-only (`λ=0`) / gradient + photometric (`λ ∈ {0.5, 1.0}`) / photometric-only. Plus B-cost knobs `|camlist|` and `M` (cost–quality trade-off — see Exp 4).
   - **Fairness condition:** hold the entire downstream pipeline identical across arms (`τ_smooth`, cadence, controller L1 normalisation, floor/cap) and vary only the raw signal source — so any quality delta is attributable to the signal's informativeness, not to an incidental change of distribution shape. No per-producer distribution alignment (that would erase the shape this ablation measures).
 - **Conservation:** hard / soft / none.
 - **Reallocation headroom:** sweep `ρ_min` (mean occupancy; `control_level` is derived from `ρ_min` + `B_total`, ADR-0003) — granularity vs per-Control-Cell-headroom trade-off.
