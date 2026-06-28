@@ -1303,7 +1303,12 @@ class GaussianModel:
                                                extra_up, min_opacity)
 
         if not self._control_level_set:
-            self.partition.set_control_level(self.get_anchor)
+            level = self.partition.set_control_level(self.get_anchor)
+            print(f"[CONTROLLER] control_level={level} "
+                  f"N_active={self.partition._N_active_chosen} "
+                  f"cell_size={self.partition._cell_size:.4f} "
+                  f"mean_occ={self.B_total / self.partition._N_active_chosen:.1f}",
+                  flush=True)
             self.controller.reset()
             self._control_level_set = True
 

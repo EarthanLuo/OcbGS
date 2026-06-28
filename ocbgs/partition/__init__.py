@@ -81,7 +81,8 @@ class OctreePartition(Partition):
     """
 
     def __init__(self, B_total, floor, rho_min, A_min,
-                 voxel_size, fork, levels, init_pos):
+                 voxel_size, fork, levels, init_pos,
+                 control_level=-1, control_level_max=-1):
         self._B_total = B_total
         self._floor = floor
         self._rho_min = rho_min
@@ -90,6 +91,9 @@ class OctreePartition(Partition):
         self._fork = fork
         self._levels = levels
         self._init_pos = init_pos
+
+        self._control_level_forced = control_level
+        self._control_level_max = control_level_max
 
         self._control_level = None
         self._cell_size = None
@@ -113,12 +117,34 @@ class OctreePartition(Partition):
         if self._control_level is not None:
             raise RuntimeError("control_level already set")
 
+        if self._control_level_forced >= 0:
+            level = self._control_level_forced
+            cell_size = self._voxel_size / (float(self._fork) ** level)
+            cell_coords = torch.round(
+                (anchor_positions.to(self._init_pos.device, copy=False) - self._init_pos) / cell_size
+            ).long()
+            N_active = torch.unique(cell_coords, dim=0).shape[0]
+            if N_active > 0 and self._floor * N_active > self._B_total:
+                raise ValueError(
+                    f"B_total={self._B_total} too small for forced control level {level}: "
+                    f"{N_active} occupied cells; need B_total >= floor*N_active="
+                    f"{self._floor * N_active}"
+                )
+            self._control_level = level
+            self._cell_size = cell_size
+            self._N_active_chosen = N_active
+            return self._control_level
+
         positions = anchor_positions.to(self._init_pos.device, copy=False)
 
         feasible = False
         best_level_feasible = None
 
-        for level in range(self._levels):
+        max_level = self._levels - 1
+        if self._control_level_max >= 0:
+            max_level = min(max_level, self._control_level_max)
+
+        for level in range(max_level + 1):
             cell_size_lvl = self._voxel_size / (float(self._fork) ** level)
             cell_coords = torch.round(
                 (positions - self._init_pos) / cell_size_lvl
@@ -174,6 +200,7 @@ class OctreePartition(Partition):
 
         self._control_level = best_level_feasible
         self._cell_size = self._voxel_size / (float(self._fork) ** self._control_level)
+        self._N_active_chosen = N_active_chosen
         return self._control_level
 
     def cell_id(self, anchor_positions):
@@ -258,4 +285,6 @@ def build_partition(training_args, voxel_size, fork, levels, init_pos):
         A_min=10,
         voxel_size=voxel_size, fork=fork,
         levels=levels, init_pos=init_pos,
+        control_level=getattr(training_args, 'control_level', -1),
+        control_level_max=getattr(training_args, 'control_level_max', -1),
     )

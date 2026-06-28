@@ -174,6 +174,8 @@ class OptimizationParams(ParamGroup):
         self.k_cap = 8
         self.rate_limit = 0.05
         self.tau_smooth = 3
+        self.control_level = -1
+        self.control_level_max = -1
         self.grow_relax_scale = 1.0
         self.demand_uniform = False
 

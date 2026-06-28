@@ -25,6 +25,7 @@ SEEDS=(${SEEDS:-0 1 2})
 MAX_JOBS=${MAX_JOBS:-1}          # single GPU
 FACTORS=(0.25 0.5 1 2)
 RELAX=0.1
+CTL_MAX=${CONTROL_LEVEL_MAX:-0}    # lock control level across B_total sweep (see CLAUDE.md §Single-seed)
 
 mkdir -p "$DST"
 
@@ -61,7 +62,8 @@ run_arm () {
                 --test_iterations "${SAVE_CHECKPOINTS[@]}" $ITERS \
                 --save_iterations "${SAVE_CHECKPOINTS[@]}" $ITERS \
                 --seed 0 --port $((6009 + RANDOM % 1000)) \
-                --B_total $B_val --grow_relax_scale $RELAX "${extra[@]}"; then
+                --B_total $B_val --grow_relax_scale $RELAX \
+                --control_level_max $CTL_MAX "${extra[@]}"; then
                 echo "  arm=$arm factor=$factor INFEASIBLE — skip"
                 continue
             fi
@@ -86,7 +88,8 @@ run_arm () {
                 --test_iterations "${SAVE_CHECKPOINTS[@]}" $ITERS \
                 --save_iterations "${SAVE_CHECKPOINTS[@]}" $ITERS \
                 --seed $seed --port $((6009 + RANDOM % 1000)) \
-                --B_total $B_val --grow_relax_scale $RELAX "${extra[@]}" &
+                --B_total $B_val --grow_relax_scale $RELAX \
+                --control_level_max $CTL_MAX "${extra[@]}" &
             (( _running++ )) || true
             sleep 10s
         done
