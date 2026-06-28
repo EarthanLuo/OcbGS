@@ -20,7 +20,7 @@ DST_ROOT=/root/autodl-tmp/exp4/bungeenerf
 ITERS=30000
 UPDATE_UNTIL=25000
 CHECKPOINTS=(7000 15000 25000 30000)
-SEEDS=(0 1 2 3 4)
+SEEDS=(${SEEDS:-0 1 2 3 4})
 MAX_JOBS=${MAX_JOBS:-3}
 
 if [ $# -eq 0 ]; then

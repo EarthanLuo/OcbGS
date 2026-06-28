@@ -53,6 +53,18 @@ After finishing a piece of code, self-review it once first — check for correct
 
 Do NOT tune knobs (e.g. `--grow_relax_scale`, `k_cap`, `rate_limit`) with full-length training runs. Split the questions: *"did the mechanism move?"* — budget fill ratio (`final anchors / B_total`), allocation change, no-crash/no-OOM — is answerable with a **short smoke** (~3k iters + compressed controller window, e.g. `--iterations 3000 --update_from 500 --update_interval 100 --update_until 3000`) in minutes; the fill ratio is roughly knob-determined and horizon-independent, so the smoke extrapolates to the full run. Only *"is quality better?"* (PSNR/SSIM/LPIPS) needs a full run, and each arm is run **once**, after the knob is locked. Rule: every full run must answer something a smoke cannot (quality); anything about moved/filled/allocation goes to a smoke.
 
+### Single-seed experiments
+
+Every `exp*.sh` script accepts `SEEDS` as an env-var override (all lines use `${SEEDS:-default list}`). Smoke runs and quick mechanism checks use one seed; full quality comparisons use the default multi-seed list. Examples:
+
+```bash
+SEEDS="0" bash scripts/exp4_garden.sh                   # single-seed smoke
+SEEDS="0 1" bash scripts/exp4_garden.sh                 # two seeds
+bash scripts/exp4_garden.sh                              # default: all seeds
+```
+
+After an experiment run is no longer needed for rendering, clean up per-seed directories: keep only `results.json` and `outputs.log`, delete everything else (checkpoints, tensorboard events, point cloud snapshots). This reduces a typical 35G experiment tree to ~10MB while preserving all metrics needed for tables and plots. Do NOT delete source datasets under `/root/autodl-tmp/`.
+
 ### Acceptance criteria
 
 Each issue's acceptance criteria must be checked item by item before the issue can be marked as passed. When closing an issue, set its **Status:** to DONE.
