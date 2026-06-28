@@ -432,6 +432,17 @@ def cmd_pareto(args):
                         v = _read_total_points_at_step(events_dir, tag, args.step)
                         if v is not None:
                             anchors.append(int(v))
+                if not anchors:
+                    log_path = os.path.join(sd, "outputs.log")
+                    if os.path.exists(log_path):
+                        with open(log_path) as lf:
+                            for line in lf:
+                                if "final anchors=" in line:
+                                    try:
+                                        anchors.append(int(line.split("final anchors=")[1].split()[0]))
+                                    except (ValueError, IndexError):
+                                        pass
+                                    break
                 rp = os.path.join(sd, "results.json")
                 if os.path.exists(rp):
                     data = _read_results_json(rp)
