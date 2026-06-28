@@ -63,6 +63,8 @@ SEEDS="0 1" bash scripts/exp4_garden.sh                 # two seeds
 bash scripts/exp4_garden.sh                              # default: all seeds
 ```
 
+All new experiment runs default to single seed (`SEEDS="0"`). Multi-seed is reserved for the final "full quality comparison" phase — per the Experiment Workflow above: smoke → single-seed full → multi-seed quality. Only graduate to multi-seed when a single-seed result needs to be statistically substantiated for a paper figure or table.
+
 After an experiment run is no longer needed for rendering, clean up per-seed directories: keep only `results.json` and `outputs.log`, delete everything else (checkpoints, tensorboard events, point cloud snapshots). This reduces a typical 35G experiment tree to ~10MB while preserving all metrics needed for tables and plots. Do NOT delete source datasets under `/root/autodl-tmp/`.
 
 ### Acceptance criteria
