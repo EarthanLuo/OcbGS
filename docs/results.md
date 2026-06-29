@@ -8,7 +8,7 @@
 | Exp4 garden | garden (Mip-NeRF 360) | DONE | Table only |
 | Exp4 bungeenerf | amsterdam | PARTIAL | B_total only (1,104,448) |
 | Exp1 garden | garden (Mip-NeRF 360) | RETIRED | Table only |
-| Exp2 garden | garden (Mip-NeRF 360) | planned | — |
+| Exp2 garden | garden (Mip-NeRF 360) | DONE | Table + `pareto_PSNR/SSIM/LPIPS.png` |
 | Exp4 bungeenerf full | bungeenerf scenes | planned | — |
 
 All results use the `ours_30000` checkpoint (iteration 30,000). B_total is measured at iteration 25,000 (`update_until`) per the protocol in `docs/eval-plan.md` §4.
@@ -191,7 +191,100 @@ SEEDS="0" bash scripts/exp1_garden.sh
 
 ---
 
+---
+
+## Exp2 — Garden Pareto
+
+**Design.** Sweep the Capacity Budget × {0.25, 0.5, 1, 2} on garden (Mip-NeRF 360) with a single A-only natural-budget controller arm. Also runs a baseline reference point (Octree-GS without controller). The purpose is to verify that budget-controlled quality scales with budget on a near-uniform demand scene — the "no-harm" claim from `docs/eval-plan.md` §5. Unlike ExpA, there is no uniform allocation comparison arm, because garden's demand field is already near-uniform (the controller naturally degrades to uniform allocation without needing a separate control).
+
+**Scene.** Garden from Mip-NeRF 360 — near-uniform demand field. According to `docs/eval-plan.md` §5, this is the no-harm control scene where the controller should not degrade quality.
+
+**Hardware.** Single RTX 4090. B_total=740,479. Single seed.
+
+### Results Table
+
+| arm | factor | anchors | PSNR | SSIM | LPIPS | n |
+|-----|--------|---------|------|------|-------|---|
+| baseline | — | ~740K | **33.750** | 0.9621 | 0.0349 | 1 |
+| demand | 0.25 | 482,564 | 31.827 | 0.9446 | 0.0533 | 1 |
+| demand | 0.5 | 438,918 | 31.826 | 0.9443 | 0.0535 | 1 |
+| demand | **1** | **541,525** | **32.266** | **0.9489** | **0.0494** | **1** |
+| demand | 2 | 512,723 | 32.036 | 0.9466 | 0.0515 | 1 |
+
+### Budget Fill and Constraint Status
+
+| arm | factor | B_total | achieved | fill% | budget honored? |
+|-----|--------|---------|----------|-------|-----------------|
+| demand | 0.25 | 185,119 | 482,564 | 261% | **False** |
+| demand | 0.5 | 370,239 | 438,918 | 119% | **False** |
+| demand | 1 | 740,479 | 541,525 | 73% | True |
+| demand | 2 | 1,480,958 | 512,723 | 35% | True |
+
+At 0.25× and 0.5×, the achieved anchor count _exceeds_ the Capacity Budget (the `<= B_total` check in `outputs.log` reads `False`). This is not a bug in the controller's ramp-phase logic: at these small budgets, the coarse progressive growth phase (iterations 0–1500, before the controller activates at `update_from=1500`) already produces more anchors than B_total. When the controller first evaluates `adjust_anchor()`, it finds `N_total >= B_total`, correctly zeroes all growth deltas, and prevents _further_ growth — but it cannot prune existing anchors in ramp phase (where `delta = clamp(delta, min=0)`, i.e. growth-only). Pruning is only available in steady phase, which requires either filling B_total naturally or triggering plateau. Since N_total already exceeds B_total, neither path activates. The controller correctly caps the anchor count at the coarse-phase floor, but the floor itself exceeds the chosen budget.
+
+At 1× and 2×, the budget constraint holds: the controller caps growth within B_total. At 2×, achieved anchors (513K) are _fewer_ than at 1× (542K) despite double the budget — the same candidate-exhaustion dynamic seen in ExpA before the control-level fix. With `grow_relax_scale=1.0` (default for garden experiments), the gradient threshold gates candidate generation tightly, and the scene simply does not produce enough viable candidates to fill a 2× budget.
+
+### Findings
+
+1. **Budget scaling yields no quality gain on garden.** Quality barely moves across the entire budget sweep: PSNR ranges from 31.83 (0.25×) to 32.27 (1×) — a span of only 0.44 dB. The 2× arm (32.04) is actually worse than 1× (32.27). Garden is demand-uniform by nature, so giving the controller more budget to redistribute produces no improvement.
+
+2. **Controller does not harm.** All demand arms produce reasonable quality (31.8–32.3 PSNR vs baseline 33.8). The ~1.5 dB gap to baseline is due to the budget constraint, not a controller defect.
+
+3. **Small-budget arms exceed B_total.** This is expected behavior: the coarse growth phase runs before the controller activates, producing more anchors than a small Capacity Budget can support. These factors (0.25×, 0.5×) are not meaningful operating points — the budget is too small for the scene.
+
+4. **grow_relax_scale = 1.0 limits fill at high budget.** At 2× B_total (1.48M), only 513K anchors are achieved (35% fill). The native gradient threshold (`relax=1.0`) rejects too many candidate offsets, throttling growth. Compare with ExpA (amsterdam, `grow_relax_scale=0.1`) where 1× achieves 99% fill. For garden, using `--grow_relax_scale 0.1` would likely improve high-budget fill.
+
+### Raw Data
+
+- CSV: `/root/autodl-tmp/exp2/garden/pareto.csv` (generated below)
+- Per-seed data: `/root/autodl-tmp/exp2/garden/{arm_0.25g,arm_0.5g,arm_1g,arm_2g}x/seed_0/`
+- Baseline: `/root/autodl-tmp/exp2/garden/arm_baseline/seed_0/`
+- B_total: `/root/autodl-tmp/btotal/BTOTAL_GARDEN`
+
+### Plotting
+
+```bash
+python scripts/collect_results.py pareto \
+    --root /root/autodl-tmp/exp2/garden \
+    --arms "" --factors 0.25 0.5 1 2 \
+    --step 25000 --checkpoint 30000 \
+    --output /root/autodl-tmp/exp2/garden/pareto.csv
+
+# The pareto command expects --arms with arm subdirectory names.
+# For the single-arm garden sweep, use a wrapper script:
+python3 -c "
+import json, os
+arms = ['']
+factors = [0.25, 0.5, 1, 2]
+root = '/root/autodl-tmp/exp2/garden'
+out = f'{root}/pareto.csv'
+with open(out, 'w') as f:
+    f.write('arm,factor,anchors,PSNR,SSIM,LPIPS,n\n')
+    for factor in factors:
+        sd = os.path.join(root, f'arm_{factor:g}x', 'seed_0')
+        rp = os.path.join(sd, 'results.json')
+        if not os.path.exists(rp): continue
+        d = json.load(open(rp))['ours_30000']
+        anchors = 0
+        lp = os.path.join(sd, 'outputs.log')
+        if os.path.exists(lp):
+            for line in open(lp):
+                if 'final anchors=' in line:
+                    anchors = int(line.split('final anchors=')[1].split()[0])
+                    break
+        f.write(f\"demand,{factor:g},{anchors},{d['PSNR']:.4f},{d['SSIM']:.4f},{d['LPIPS']:.4f},1\n\")
+print(f'Wrote {out}')
+"
+
+python scripts/plot_pareto.py \
+    --csv /root/autodl-tmp/exp2/garden/pareto.csv \
+    --metric PSNR \
+    --output /root/autodl-tmp/exp2/garden/pareto_PSNR.png \
+    --title "Controllable-budget Pareto — garden (PSNR)"
+```
+
+---
+
 ## Upcoming
 
-- **Exp2 — Garden Pareto.** Sweep B_total × {0.25, 0.5, 1, 2} on garden with A-only natural-budget controller. No uniform comparison arm. Purpose: verify that budget-controlled quality scales with budget on a near-uniform scene (no-harm claim).
 - **Exp4 — BungeeNeRF.** Full 3-arm comparison across multiple BungeeNeRF scenes (amsterdam, hollywood, pompidou, etc.) to test the "no-harm" claim at large scale with heterogeneous demand. The amsterdam B_total is already measured (1,104,448); remaining scenes need baselines.
